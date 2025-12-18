@@ -1,43 +1,61 @@
-# netinsight/dns_test.py
+# src/dns_check.py
+
 import socket
-from datetime import datetime
+import time
+from typing import Any, Dict, Optional
 
 
-def run_dns(hostname, timeout=2.0):
+def run_dns(hostname: str, timeout: float = 2.0) -> Dict[str, Any]:
     """
-    Resolve a hostname and measure how long it takes.
+    Resolve a hostname using socket.gethostbyname and measure resolution time.
 
     Returns a dict with:
       - hostname
-      - ok (bool)
-      - ip (resolved IP or None)
-      - dns_ms (resolution time in ms)
-      - error (str or None)
+      - ok          : bool
+      - ip          : resolved IP string or None
+      - dns_ms      : resolution time in ms
+      - error       : error string on failure, else None
+      - error_kind  : short classified error label, e.g. "ok", "dns_timeout",
+                      "dns_nxdomain", "dns_temp_failure", "dns_other_error"
     """
-    start = datetime.now()
-    ip = None
+    start = time.monotonic()
+    ip: Optional[str] = None
     ok = False
-    error = None
+    error: Optional[str] = None
+    error_kind = "ok"
 
-    # Easiest version: just call gethostbyname with a timeout.
-    # We set a global timeout and reset it afterwards to keep it simple.
-    old_timeout = socket.getdefaulttimeout()
     try:
-        socket.setdefaulttimeout(timeout)
-        try:
-            ip = socket.gethostbyname(hostname)
-            ok = True
-        except Exception as e:
-            error = str(e)
-    finally:
-        socket.setdefaulttimeout(old_timeout)
+        # Note: socket.gethostbyname does not take a timeout directly;
+        # timeout is controlled by system resolver settings. We accept
+        # a timeout parameter for future use / symmetry with HTTP.
+        ip = socket.gethostbyname(hostname)
+        ok = True
+    except socket.gaierror as e:
+        error = str(e)
+        ok = False
+        msg = error.lower()
+        if "temporary failure in name resolution" in msg:
+            error_kind = "dns_temp_failure"
+        elif "name or service not known" in msg or "not known" in msg:
+            error_kind = "dns_nxdomain"
+        else:
+            error_kind = "dns_other_error"
+    except socket.timeout:
+        error = "DNS timeout"
+        ok = False
+        error_kind = "dns_timeout"
+    except Exception as e:
+        error = str(e)
+        ok = False
+        error_kind = "dns_other_error"
 
-    elapsed_ms = (datetime.now() - start).total_seconds() * 1000.0
+    dns_ms = (time.monotonic() - start) * 1000.0
 
     return {
         "hostname": hostname,
         "ok": ok,
         "ip": ip,
-        "dns_ms": elapsed_ms,
+        "dns_ms": dns_ms,
         "error": error,
+        "error_kind": error_kind,
     }

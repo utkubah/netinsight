@@ -2,3 +2,4 @@ requests
 ping3
 dnspython
 pytest
+pandas

@@ -22,7 +22,7 @@ SERVICES = [
     # ---------------------------------------------------------------------
     {
         "name": "gateway",
-        "hostname": "192.168.240.1",           # change to your real gateway if needed
+        "hostname": "192.168.240.1",           # some changes are needed
         "url": "http://192.168.240.1/",
         "tags": ["gateway", "wifi_path", "baseline"],
         "ping": {"enabled": True, "count": 5, "timeout": 1.0},

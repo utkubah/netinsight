@@ -140,7 +140,6 @@ def run_once() -> None:
 
                 writer.writerow(row)
                 dns_count += 1
-
             # --- HTTP -----------------------------------------------------
             http_cfg = svc.get("http", {})
             if http_cfg.get("enabled", False):
@@ -165,7 +164,20 @@ def run_once() -> None:
                 row["status_code"] = http_result.get("status_code")
                 row["error_kind"] = http_result.get("error_kind")
                 row["error_message"] = http_result.get("error")
-                row["details"] = ""
+
+                status_class = http_result.get("status_class")
+                bytes_downloaded = http_result.get("bytes")
+                redirects = http_result.get("redirects")
+
+                parts = []
+                if status_class is not None:
+                    parts.append(f"status_class={status_class}")
+                if bytes_downloaded is not None:
+                    parts.append(f"bytes={bytes_downloaded}")
+                if redirects is not None:
+                    parts.append(f"redirects={redirects}")
+
+                row["details"] = ";".join(parts)
 
                 writer.writerow(row)
                 http_count += 1

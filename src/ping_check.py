@@ -1,4 +1,33 @@
 # src/ping_check.py
+"""
+Ping probe for NetInsight.
+
+This module provides a Python wrapper around the system `ping` command.
+Instead of parsing ping's output, we:
+
+- run several single-packet pings (`count` times),
+- measure the time each command takes in Python,
+- treat non-zero exit codes as packet loss.
+
+From these samples we derive:
+- latency_min_ms / latency_max_ms / latency_avg_ms:
+    Round-trip times. Low avg (<30–40 ms) is good for most uses.
+- latency_p95_ms:
+    95th percentile latency (how bad the spikes are).
+    High p95 with low avg often means "usually fine but sometimes stutters".
+- jitter_ms:
+    Mean absolute difference between consecutive successful samples.
+    High jitter is bad for gaming / voice / video calls even if avg is OK.
+- packet_loss_pct:
+    Percentage of lost packets. >1–2% already hurts real-time apps.
+- error_kind:
+    Quick classification of failure cause when *all* packets fail:
+    e.g. "ping_timeout", "ping_unreachable", "ping_dns_failure".
+
+These raw metrics are meant to be combined later into human sentences like:
+- "Latency and jitter to Google look stable (great for Zoom)."
+- "High jitter and packet loss to Discord suggest unstable Wi-Fi or congestion."
+"""
 
 import subprocess
 import time
@@ -9,20 +38,38 @@ def run_ping(target: str, count: int = 5, timeout: float = 1.0) -> Dict[str, Any
     """
     Run `ping` to the given target several times and measure latency in Python.
 
-    For each of `count` attempts, we run a single-packet ping and:
-      - measure how long the command takes (as latency),
-      - treat non-zero exit codes as packet loss.
+    Each attempt:
+      - uses:   ping -n -c 1 -W <timeout> <target>
+      - if exit code == 0  -> one successful latency sample
+      - if exit code != 0  -> treated as a lost packet
 
     Returns a dict with:
-      - target
-      - sent, received
-      - latency_min_ms, latency_max_ms, latency_avg_ms
-      - latency_p95_ms      (95th percentile latency, if we have samples)
-      - jitter_ms           (mean abs diff between consecutive latencies)
-      - latencies_ms        (list of individual successful latencies)
-      - packet_loss_pct
-      - error               (None or a short message if everything failed)
-      - error_kind          (short classified error label, or "ok")
+      - target: str
+      - sent: int
+      - received: int
+      - latency_min_ms: float | None
+      - latency_max_ms: float | None
+      - latency_avg_ms: float | None
+      - latency_p95_ms: float | None
+      - jitter_ms: float | None
+      - latencies_ms: list[float]
+      - packet_loss_pct: float
+      - error: str | None
+      - error_kind: str
+
+    Interpretation notes (rules of thumb, not enforced here):
+      - latency_avg_ms:
+          <40 ms       -> feels very snappy (good for competitive gaming)
+          40–80 ms     -> fine for video calls / casual gaming
+          80–150+ ms   -> noticeable delay
+      - jitter_ms:
+          <10 ms       -> usually smooth for calls/gaming
+          10–30 ms     -> borderline; occasional glitching
+          >30 ms       -> choppy / unstable experience
+      - packet_loss_pct:
+          0–1%         -> ideal
+          1–5%         -> minor but noticeable
+          >5%          -> clearly problematic
     """
     latencies_ms: List[float] = []
     errors: List[str] = []

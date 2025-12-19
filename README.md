@@ -17,8 +17,6 @@ Planned extras: highlighting good/bad hours, detecting latency spikes,
 CSV export, and a simple UI for visualization.
 
 
-
-
 ### Probes & Metrics
 
 NetInsight currently runs three types of probes on each configured service:
@@ -125,11 +123,12 @@ Example outcomes:
 
 Introduce multiple **diagnostic modes** on top of the current baseline logger to make NetInsight feel more like a network “lab” than a simple ping script. Planned modes include: 
 
-(1) a **Service Health & Blocked-Site mode** that focuses on a small set of services (e.g. Discord, YouTube, Bocconi, GitHub) and aggressively probes them to answer “is this service actually down globally, or just blocked/broken on my network?”, combining status codes, latency and `error_kind` to distinguish true outages from DNS blocking, connection resets or TLS issues. 
+(1) a **Service Health & Blocked-Site mode** that focuses on a small set of services (e.g. Discord, YouTube, Bocconi, GitHub) and aggressively probes them to answer “is this service actually down globally, or just blocked/broken on my network?”, combining status codes, latency and `error_kind` to distinguish true outages from DNS blocking, connection resets or TLS issues. Main mode can advice user to activate 
+this specific service health mode 
 
 (2) A **Wi-Fi vs ISP diagnosis mode**, which pings the local gateway and a stable external baseline in high-frequency bursts, logging jitter and packet loss separately for `role=gateway` and `role=external` to infer whether problems come from dorm Wi-Fi congestion or from the wider ISP path. 
 
-(3) A **Speedtest mode**, run on demand, that logs latency, jitter and approximate download throughput to a dedicated CSV, providing a simple “overall connection quality” snapshot. 
+(3) A **Speedtest mode**, run on demand, that logs latency, jitter and approximate download throughput to a dedicated CSV, providing a simple “overall connection quality” snapshot. Possible userface(?)
 
 (4) A **24/7 Pattern / Time-of-Day mode**, which runs continuously and aggregates metrics per hour and per service (e.g. median latency, jitter, failure rate, quality scores), so we can build heatmaps of “good vs bad hours” in the dorm and quantify how performance changes over the day. 
 
@@ -137,3 +136,50 @@ Introduce multiple **diagnostic modes** on top of the current baseline logger to
 
 (6) Scenario-specific **Profile modes** (e.g. “Gaming”, “Video Calls”, “Streaming”) that reuse the same probes but summarize them into per-scenario quality scores using different weights and thresholds, so NetInsight can answer questions like “is this dorm Wi-Fi good enough for competitive gaming at 9pm?” rather than just raw latency numbers.
 
+
+
+## Project Layout
+
+- `src/main.py`  
+  Baseline 24/7 logger. Every `INTERVAL_SECONDS`, runs ping + DNS + HTTP for
+  all `SERVICES` from `targets_config.py` and appends to `data/netinsight_log.csv`
+  with `mode=baseline`.
+
+- `src/targets_config.py`  
+  Definitions of monitored services (name, hostname, url, tags, per-probe
+  settings like ping count / timeout).
+
+- `src/ping_check.py`  
+  ICMP ping probe using the system `ping` command, computing latency stats,
+  jitter, packet loss, and `error_kind`.
+
+- `src/dns_check.py`  
+  DNS probe using `socket.gethostbyname`, measuring `dns_ms` and classifying
+  failures (`dns_temp_failure`, `dns_nxdomain`, etc.).
+
+- `src/http_check.py`  
+  HTTP/HTTPS GET probe using `requests`, measuring `http_ms`, `status_code`,
+  `status_class`, response size, redirects, and `error_kind`.
+
+- `src/mode_wifi_diag.py`  
+  Wi-Fi vs ISP diagnostic mode. Short, high-frequency ping burst to a Wi-Fi
+  gateway and an external baseline, logged to `data/netinsight_wifi_diag.csv`
+  with `mode=wifi_diag`.
+
+- `src/mode_speedtest.py`  
+  One-off speedtest mode using the `speedtest` module (speedtest-cli), logging
+  throughput and ping to `data/netinsight_speedtest.csv` with `mode=speedtest`.
+
+- `tests/`  
+  Pytest tests for the probe functions and baseline `run_once()` smoke tests.
+
+### Data files
+
+- `data/netinsight_log.csv`  
+  Baseline 24/7 measurements (ping/DNS/HTTP to all services).
+
+- `data/netinsight_wifi_diag.csv`  
+  Wi-Fi vs ISP diagnostic bursts (ping only, per role).
+
+- `data/netinsight_speedtest.csv`  
+  On-demand speedtest snapshots (ping + download/upload Mbps).

@@ -22,12 +22,12 @@ SERVICES = [
     # ---------------------------------------------------------------------
     {
         "name": "gateway",
-        "hostname": "192.168.240.1",           # some changes are needed
-        "url": "http://192.168.240.1/",
+        "hostname": "127.0.1.1",           # ok make sure this value is selected automatically
+        "url": "http://127.0.1.1/",
         "tags": ["gateway", "wifi_path", "baseline"],
         "ping": {"enabled": True, "count": 5, "timeout": 1.0},
         "dns":  {"enabled": False, "timeout": 1.0},   # IP, so DNS is pointless
-        "http": {"enabled": False, "timeout": 2.0},
+        "http": {"enabled": True, "timeout": 2.0},
     },
     {
         "name": "google",

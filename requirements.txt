@@ -3,3 +3,4 @@ ping3
 dnspython
 pytest
 pandas
+speedtest-cli

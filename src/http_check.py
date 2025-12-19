@@ -121,7 +121,11 @@ def run_http(url: str, timeout: float = 3.0) -> Dict[str, Any]:
         msg = error.lower()
         if "connection reset by peer" in msg:
             error_kind = "http_connection_reset"
-        elif "failed to resolve" in msg or "name or service not known" in msg or "temporary failure in name resolution" in msg:
+        elif (
+            "failed to resolve" in msg
+            or "name or service not known" in msg
+            or "temporary failure in name resolution" in msg
+        ):
             error_kind = "http_dns_error"
         else:
             error_kind = "http_connection_error"

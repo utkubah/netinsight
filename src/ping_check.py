@@ -56,20 +56,6 @@ def run_ping(target: str, count: int = 5, timeout: float = 1.0) -> Dict[str, Any
       - packet_loss_pct: float
       - error: str | None
       - error_kind: str
-
-    Interpretation notes (rules of thumb, not enforced here):
-      - latency_avg_ms:
-          <40 ms       -> feels very snappy (good for competitive gaming)
-          40–80 ms     -> fine for video calls / casual gaming
-          80–150+ ms   -> noticeable delay
-      - jitter_ms:
-          <10 ms       -> usually smooth for calls/gaming
-          10–30 ms     -> borderline; occasional glitching
-          >30 ms       -> choppy / unstable experience
-      - packet_loss_pct:
-          0–1%         -> ideal
-          1–5%         -> minor but noticeable
-          >5%          -> clearly problematic
     """
     latencies_ms: List[float] = []
     errors: List[str] = []

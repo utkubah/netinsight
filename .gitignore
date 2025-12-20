@@ -1,2 +1,16 @@
 __pycache__/
 .pytest_cache/
+
+# Python venv
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+# Data files (keep derived CSVs if you want, but ignore raw log by default)
+data/netinsight_log.csv

@@ -2,13 +2,18 @@
 """
 NetInsight baseline logger.
 
-This script runs the "baseline" mode:
+This script runs the "baseline" 24/7 mode:
 - every INTERVAL_SECONDS, it iterates over SERVICES
 - for each service, it runs ping / DNS / HTTP if enabled
 - logs one row per probe to data/netinsight_log.csv
 
-The CSV includes a 'mode' column so future modes can share the same file
-or be filtered easily.
+The CSV includes:
+- core metrics (latency, jitter, packet loss, dns_ms, http_ms, status_code)
+- error_kind / error_message for classification
+- a lightweight per-request throughput estimate for HTTP probes
+  (throughput_mbps in the details column)
+
+Other modes (wifi_diag, speedtest) live in separate files and CSVs.
 """
 
 import csv
@@ -46,8 +51,15 @@ CSV_HEADERS = [
 ]
 
 
-def run_once(round_id: str):
-    """Run one measurement round over all configured SERVICES."""
+def run_once(round_id=None):
+    """
+    Run one measurement round over all configured SERVICES.
+
+    If round_id is not provided, it will be generated from the current UTC time.
+    """
+    if round_id is None:
+        round_id = datetime.now(timezone.utc).isoformat()
+
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
     file_exists = os.path.exists(LOG_PATH)
 
@@ -163,6 +175,7 @@ def run_once(round_id: str):
                 row["error_message"] = http_result.get("error")
 
                 details_parts = []
+
                 status_class = http_result.get("status_class")
                 if status_class is not None:
                     details_parts.append(f"status_class={status_class}")
@@ -174,6 +187,20 @@ def run_once(round_id: str):
                 redirects = http_result.get("redirects")
                 if redirects is not None:
                     details_parts.append(f"redirects={redirects}")
+
+                # approximate throughput in Mbps if we have size + time
+                http_ms = http_result.get("http_ms")
+                if (
+                    isinstance(bytes_downloaded, (int, float))
+                    and isinstance(http_ms, (int, float))
+                    and http_ms > 0
+                ):
+                    throughput_mbps = (
+                        (bytes_downloaded * 8 / 1_000_000.0) / (http_ms / 1000.0)
+                    )
+                    details_parts.append(
+                        f"throughput_mbps={throughput_mbps:.3f}"
+                    )
 
                 row["details"] = ";".join(details_parts)
 

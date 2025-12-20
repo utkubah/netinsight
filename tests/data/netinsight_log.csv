@@ -1,2 +1,0 @@
-timestamp,ping_target,ping_latency_avg_ms,ping_packet_loss_pct,ping_error,dns_hostname,dns_ms,dns_ok,dns_error,http_url,http_ms,http_ok,http_status_code,http_error
-2025-12-18T11:32:34.138066+00:00,8.8.8.8,21.1464,0.0,,www.google.com,18.204,True,,https://www.google.com/generate_204,170.69899999999998,True,204,

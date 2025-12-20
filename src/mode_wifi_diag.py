@@ -9,7 +9,7 @@ This mode runs a short, high-frequency ping test against:
 It logs only ping metrics (latency, jitter, packet loss, error_kind) to
 data/netinsight_wifi_diag.csv with mode=wifi_diag.
 
-HOW TO INTERPRET RESULTS (for analysis):
+HOW TO INTERPRET RESULTS (for analysis / summary):
 
 You get rows with:
   - role = "gateway" or "google"
@@ -99,6 +99,26 @@ def main():
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
     file_exists = os.path.exists(LOG_PATH)
 
+    # simple accumulators for a tiny summary at the end
+    stats = {
+        "gateway": {
+            "latency_sum": 0.0,
+            "latency_count": 0,
+            "jitter_sum": 0.0,
+            "jitter_count": 0,
+            "loss_sum": 0.0,
+            "loss_count": 0,
+        },
+        "google": {
+            "latency_sum": 0.0,
+            "latency_count": 0,
+            "jitter_sum": 0.0,
+            "jitter_count": 0,
+            "loss_sum": 0.0,
+            "loss_count": 0,
+        },
+    }
+
     with open(LOG_PATH, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
         if not file_exists:
@@ -145,9 +165,76 @@ def main():
 
                 writer.writerow(row)
 
+                # update simple stats for summary
+                latency = ping_result.get("latency_avg_ms")
+                jitter = ping_result.get("jitter_ms")
+                loss = ping_result.get("packet_loss_pct")
+
+                if isinstance(latency, (int, float)):
+                    stats[role]["latency_sum"] += latency
+                    stats[role]["latency_count"] += 1
+                if isinstance(jitter, (int, float)):
+                    stats[role]["jitter_sum"] += jitter
+                    stats[role]["jitter_count"] += 1
+                if isinstance(loss, (int, float)):
+                    stats[role]["loss_sum"] += loss
+                    stats[role]["loss_count"] += 1
+
             time.sleep(INTERVAL_SECONDS)
 
-    print("wifi_diag: finished.")
+    # tiny summary / quick interpretation
+    def avg(stat_dict, key_sum, key_count):
+        if stat_dict[key_count] > 0:
+            return stat_dict[key_sum] / stat_dict[key_count]
+        return None
+
+    gw_lat = avg(stats["gateway"], "latency_sum", "latency_count")
+    gw_jit = avg(stats["gateway"], "jitter_sum", "jitter_count")
+    gw_loss = avg(stats["gateway"], "loss_sum", "loss_count")
+
+    gg_lat = avg(stats["google"], "latency_sum", "latency_count")
+    gg_jit = avg(stats["google"], "jitter_sum", "jitter_count")
+    gg_loss = avg(stats["google"], "loss_sum", "loss_count")
+
+    print("\nwifi_diag summary (approx):")
+    print(
+        f"  gateway: latency={gw_lat:.1f} ms, jitter={gw_jit:.1f} ms, "
+        f"loss={gw_loss:.1f}%"
+        if gw_lat is not None and gw_jit is not None and gw_loss is not None
+        else "  gateway: not enough data"
+    )
+    print(
+        f"  google:  latency={gg_lat:.1f} ms, jitter={gg_jit:.1f} ms, "
+        f"loss={gg_loss:.1f}%"
+        if gg_lat is not None and gg_jit is not None and gg_loss is not None
+        else "  google:  not enough data"
+    )
+
+    wifi_suspect = False
+    isp_suspect = False
+
+    # Very rough thresholds; the analysis layer can refine these later
+    if gw_jit is not None and gw_loss is not None:
+        if gw_jit > 20.0 or gw_loss > 5.0:
+            wifi_suspect = True
+
+    if (
+        gg_jit is not None
+        and gg_loss is not None
+        and gw_jit is not None
+        and gw_loss is not None
+    ):
+        if (gg_jit > 20.0 or gg_loss > 5.0) and (gw_jit < 10.0 and gw_loss < 2.0):
+            isp_suspect = True
+
+    if wifi_suspect:
+        print("  → Wi-Fi / local network likely unstable (gateway already looks bad).")
+    elif isp_suspect:
+        print("  → Wi-Fi looks OK; problems likely after the router (ISP / internet).")
+    else:
+        print("  → Both paths look mostly healthy or inconclusive in this short run.")
+
+    print("\nwifi_diag: finished.")
 
 
 if __name__ == "__main__":

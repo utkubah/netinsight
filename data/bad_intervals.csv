@@ -1,3 +1,3 @@
 start_time,end_time,duration_seconds,mean_score,bad_pct,n_samples,num_windows,severity,reason,affected_services_count,top_services_by_bad_pct,top_services_by_count,gateway_involved,diagnosis,mean_score_z,mean_score_delta
-2025-12-18 17:29:00+03:00,2025-12-18 17:42:00+03:00,780.0,44.51,51.73,953,9,3,low_mean+high_bad,16,"discord(100%),gateway(100%),bocconi_www(67%)","bocconi_www(15),github(15),google(15)",True,network_wide,-2.94,-13.71
-2025-12-18 18:01:00+03:00,2025-12-18 18:09:00+03:00,480.0,46.02,49.54,440,4,3,low_mean+high_bad,16,"gateway(100%),youtube(78%),discord(67%)","bocconi_www(9),discord(9),github(9)",True,network_wide,-2.62,-12.2
+2025-12-18 17:29:00+03:00,2025-12-18 17:42:00+03:00,780.0,44.51,51.73,953,9,3,low_mean+high_bad,16,"discord(100%),gateway(100%),bocconi_www(67%)","bocconi_www(15),github(15),google(15)",True,network_wide,-3.05,-13.93
+2025-12-18 18:01:00+03:00,2025-12-18 18:09:00+03:00,480.0,46.02,49.54,440,4,3,low_mean+high_bad,16,"gateway(100%),youtube(78%),discord(67%)","bocconi_www(9),discord(9),github(9)",True,network_wide,-2.72,-12.42

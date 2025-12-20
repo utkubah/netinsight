@@ -5,7 +5,7 @@ Reads:
   data/netinsight_log.csv
 
 Writes:
-  data/quality_rows.csv         (row-level, with score + tier + score_z)
+  data/quality_rows.csv         (row-level, with score + tier)
   data/quality_hourly.csv       (hourly aggregates across all services/probes)
   data/quality_by_service.csv   (service ranking by avg score)
 
@@ -14,6 +14,7 @@ Run:
 """
 
 import math
+import re
 from pathlib import Path
 import pandas as pd
 
@@ -22,8 +23,11 @@ OUT_ROWS_PATH = Path("data") / "quality_rows.csv"
 OUT_HOURLY_PATH = Path("data") / "quality_hourly.csv"
 OUT_SERVICE_PATH = Path("data") / "quality_by_service.csv"
 
-# Local analysis timezone (for grouping, readability)
+# Adjust if you want a different local analysis timezone
 TIMEZONE = "Europe/Istanbul"
+
+# If the log has a 'mode' column (Utku's changes), we score only baseline by default
+BASELINE_MODE_NAME = "baseline"
 
 
 def clamp(x: float, lo: float = 0.0, hi: float = 100.0) -> float:
@@ -34,15 +38,16 @@ def parse_timestamp(ts: pd.Series) -> pd.Series:
     """
     Parse timestamps and normalize to TIMEZONE.
 
-    - If tz-aware: convert to TIMEZONE.
-    - If tz-naive: assume UTC (collector writes UTC), then convert to TIMEZONE.
+    - If tz-aware (e.g. '...+03:00'), convert to TIMEZONE.
+    - If tz-naive, assume UTC then convert to TIMEZONE.
     """
     dt = pd.to_datetime(ts, errors="coerce", utc=False)
 
+    # tz-aware -> convert
     if hasattr(dt.dt, "tz") and dt.dt.tz is not None:
         return dt.dt.tz_convert(TIMEZONE)
 
-    # tz-naive: treat as UTC then convert
+    # tz-naive -> assume UTC, then convert
     dt = dt.dt.tz_localize("UTC", nonexistent="shift_forward", ambiguous="NaT")
     return dt.dt.tz_convert(TIMEZONE)
 
@@ -59,9 +64,24 @@ def coerce_success(s: pd.Series) -> pd.Series:
     mapping = {"true": 1, "false": 0, "1": 1, "0": 0, "yes": 1, "no": 0}
     out = s2.map(mapping)
 
+    # fallback numeric
     out = out.fillna(pd.to_numeric(s, errors="coerce"))
     out = out.fillna(0).astype(int).clip(0, 1)
     return out
+
+
+_THROUGHPUT_RE = re.compile(r"(?:^|;)throughput_mbps=([0-9]*\.?[0-9]+)(?:;|$)")
+
+
+def extract_throughput_mbps(details: pd.Series) -> pd.Series:
+    """
+    Extract throughput_mbps from details string if present.
+    Example details: 'status_class=2xx;bytes=123;throughput_mbps=4.321'
+    Returns float series (NaN if not present).
+    """
+    s = details.fillna("").astype(str)
+    m = s.str.extract(_THROUGHPUT_RE, expand=False)
+    return pd.to_numeric(m, errors="coerce")
 
 
 def score_ping_row(row: pd.Series, has_loss_col: bool) -> float:
@@ -75,16 +95,21 @@ def score_ping_row(row: pd.Series, has_loss_col: bool) -> float:
     lat = float(lat) if pd.notna(lat) else 9999.0
     jit = float(jit) if pd.notna(jit) else 9999.0
 
+    # Latency score: 0ms=>100, 200ms=>~50, 600ms=>~10
     lat_score = 100.0 * math.exp(-lat / 200.0)
+
+    # Jitter score: 0ms=>100, 20ms=>~37, 50ms=>~8
     jit_score = 100.0 * math.exp(-jit / 20.0)
 
     if has_loss_col:
         loss = row.get("packet_loss_pct")
         loss = float(loss) if pd.notna(loss) else 0.0
+        # Loss score: 0%=>100, 2%=>~37, 10%=>~0.7
         loss_score = 100.0 * math.exp(-loss / 2.0)
+
         return clamp(0.55 * lat_score + 0.30 * jit_score + 0.15 * loss_score)
 
-    # if packet_loss_pct not present, renormalize weights
+    # If no packet_loss_pct: renormalize weights
     return clamp(0.65 * lat_score + 0.35 * jit_score)
 
 
@@ -96,6 +121,7 @@ def score_dns_row(row: pd.Series) -> float:
     dns_ms = row.get("dns_ms", row.get("latency_ms"))
     dns_ms = float(dns_ms) if pd.notna(dns_ms) else 9999.0
 
+    # 0ms=>100, 50ms=>~37, 200ms=>~1.8
     s = 100.0 * math.exp(-dns_ms / 50.0)
     return clamp(s)
 
@@ -108,6 +134,7 @@ def score_http_row(row: pd.Series) -> float:
     http_ms = row.get("http_ms", row.get("latency_ms"))
     http_ms = float(http_ms) if pd.notna(http_ms) else 9999.0
 
+    # Base timing score: 0ms=>100, 300ms=>~37, 1200ms=>~2
     timing = 100.0 * math.exp(-http_ms / 300.0)
 
     status = row.get("status_code")
@@ -143,7 +170,14 @@ def main() -> None:
         raise FileNotFoundError(f"Log file not found: {LOG_PATH}")
 
     df = pd.read_csv(LOG_PATH)
+
+    # minimal required columns for scoring pipeline
     require_columns(df, ["timestamp", "probe_type", "service_name", "success"])
+
+    # If Utku-style "mode" exists, keep baseline only (prevents future mode mixing)
+    if "mode" in df.columns:
+        df["mode"] = df["mode"].astype(str)
+        df = df[df["mode"] == BASELINE_MODE_NAME].copy()
 
     # Parse + normalize time
     df["timestamp"] = parse_timestamp(df["timestamp"])
@@ -154,6 +188,12 @@ def main() -> None:
 
     # Convenience column
     df["hour"] = df["timestamp"].dt.hour
+
+    # Optional: extract throughput_mbps for HTTP rows if present in details
+    if "details" in df.columns:
+        df["throughput_mbps"] = extract_throughput_mbps(df["details"])
+    else:
+        df["throughput_mbps"] = pd.NA
 
     # Compute per-row scores
     probe = df["probe_type"].astype(str)
@@ -171,14 +211,6 @@ def main() -> None:
 
     df["tier"] = df["score"].apply(tier_from_score)
 
-    # --- Z-score normalization (global, within this dataset) ---
-    score_mean = float(df["score"].mean())
-    score_std = float(df["score"].std(ddof=0))
-    if score_std < 1e-9:
-        df["score_z"] = 0.0
-    else:
-        df["score_z"] = (df["score"] - score_mean) / score_std
-
     # Deterministic ordering
     sort_cols = [c for c in ["timestamp", "service_name", "probe_type"] if c in df.columns]
     df = df.sort_values(sort_cols).reset_index(drop=True)
@@ -191,7 +223,6 @@ def main() -> None:
         df.groupby("hour")
         .agg(
             score_avg=("score", "mean"),
-            score_z_avg=("score_z", "mean"),
             score_p10=("score", lambda s: s.quantile(0.10)),
             score_p90=("score", lambda s: s.quantile(0.90)),
             good_pct=("tier", lambda t: 100.0 * (t == "good").mean()),
@@ -201,7 +232,7 @@ def main() -> None:
         .sort_index()
         .reset_index()
     )
-    float_cols = ["score_avg", "score_z_avg", "score_p10", "score_p90", "good_pct", "bad_pct"]
+    float_cols = ["score_avg", "score_p10", "score_p90", "good_pct", "bad_pct"]
     hourly[float_cols] = hourly[float_cols].round(2)
     hourly.to_csv(OUT_HOURLY_PATH, index=False)
 
@@ -210,7 +241,6 @@ def main() -> None:
         df.groupby("service_name")
         .agg(
             score_avg=("score", "mean"),
-            score_z_avg=("score_z", "mean"),
             good_pct=("tier", lambda t: 100.0 * (t == "good").mean()),
             bad_pct=("tier", lambda t: 100.0 * (t == "bad").mean()),
             num_rows=("tier", "size"),
@@ -218,15 +248,15 @@ def main() -> None:
         .sort_values("score_avg", ascending=True)
         .reset_index()
     )
-    service[["score_avg", "score_z_avg", "good_pct", "bad_pct"]] = service[
-        ["score_avg", "score_z_avg", "good_pct", "bad_pct"]
-    ].round(2)
+    service[["score_avg", "good_pct", "bad_pct"]] = service[["score_avg", "good_pct", "bad_pct"]].round(2)
     service.to_csv(OUT_SERVICE_PATH, index=False)
 
     print(f"Saved: {OUT_ROWS_PATH}")
     print(f"Saved: {OUT_HOURLY_PATH}")
     print(f"Saved: {OUT_SERVICE_PATH}")
     print(f"Rows scored: {len(df)}")
+    if "mode" in df.columns:
+        print(f"Mode filter applied: mode == '{BASELINE_MODE_NAME}'")
 
 
 if __name__ == "__main__":

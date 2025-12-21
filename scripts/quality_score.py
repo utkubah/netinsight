@@ -5,7 +5,7 @@ Reads:
   data/netinsight_log.csv
 
 Writes:
-  data/quality_rows.csv         (row-level, with score + tier)
+  data/quality_rows.csv         (row-level, with score + tier + throughput + optional mode)
   data/quality_hourly.csv       (hourly aggregates across all services/probes)
   data/quality_by_service.csv   (service ranking by avg score)
 
@@ -23,7 +23,6 @@ OUT_ROWS_PATH = Path("data") / "quality_rows.csv"
 OUT_HOURLY_PATH = Path("data") / "quality_hourly.csv"
 OUT_SERVICE_PATH = Path("data") / "quality_by_service.csv"
 
-# Adjust if you want a different local analysis timezone
 TIMEZONE = "Europe/Istanbul"
 
 # If the log has a 'mode' column (Utku's changes), we score only baseline by default
@@ -43,11 +42,9 @@ def parse_timestamp(ts: pd.Series) -> pd.Series:
     """
     dt = pd.to_datetime(ts, errors="coerce", utc=False)
 
-    # tz-aware -> convert
     if hasattr(dt.dt, "tz") and dt.dt.tz is not None:
         return dt.dt.tz_convert(TIMEZONE)
 
-    # tz-naive -> assume UTC, then convert
     dt = dt.dt.tz_localize("UTC", nonexistent="shift_forward", ambiguous="NaT")
     return dt.dt.tz_convert(TIMEZONE)
 
@@ -64,7 +61,6 @@ def coerce_success(s: pd.Series) -> pd.Series:
     mapping = {"true": 1, "false": 0, "1": 1, "0": 0, "yes": 1, "no": 0}
     out = s2.map(mapping)
 
-    # fallback numeric
     out = out.fillna(pd.to_numeric(s, errors="coerce"))
     out = out.fillna(0).astype(int).clip(0, 1)
     return out
@@ -76,7 +72,7 @@ _THROUGHPUT_RE = re.compile(r"(?:^|;)throughput_mbps=([0-9]*\.?[0-9]+)(?:;|$)")
 def extract_throughput_mbps(details: pd.Series) -> pd.Series:
     """
     Extract throughput_mbps from details string if present.
-    Example details: 'status_class=2xx;bytes=123;throughput_mbps=4.321'
+    Example: 'status_class=2xx;bytes=123;throughput_mbps=4.321'
     Returns float series (NaN if not present).
     """
     s = details.fillna("").astype(str)
@@ -95,21 +91,15 @@ def score_ping_row(row: pd.Series, has_loss_col: bool) -> float:
     lat = float(lat) if pd.notna(lat) else 9999.0
     jit = float(jit) if pd.notna(jit) else 9999.0
 
-    # Latency score: 0ms=>100, 200ms=>~50, 600ms=>~10
     lat_score = 100.0 * math.exp(-lat / 200.0)
-
-    # Jitter score: 0ms=>100, 20ms=>~37, 50ms=>~8
     jit_score = 100.0 * math.exp(-jit / 20.0)
 
     if has_loss_col:
         loss = row.get("packet_loss_pct")
         loss = float(loss) if pd.notna(loss) else 0.0
-        # Loss score: 0%=>100, 2%=>~37, 10%=>~0.7
         loss_score = 100.0 * math.exp(-loss / 2.0)
-
         return clamp(0.55 * lat_score + 0.30 * jit_score + 0.15 * loss_score)
 
-    # If no packet_loss_pct: renormalize weights
     return clamp(0.65 * lat_score + 0.35 * jit_score)
 
 
@@ -121,7 +111,6 @@ def score_dns_row(row: pd.Series) -> float:
     dns_ms = row.get("dns_ms", row.get("latency_ms"))
     dns_ms = float(dns_ms) if pd.notna(dns_ms) else 9999.0
 
-    # 0ms=>100, 50ms=>~37, 200ms=>~1.8
     s = 100.0 * math.exp(-dns_ms / 50.0)
     return clamp(s)
 
@@ -134,7 +123,6 @@ def score_http_row(row: pd.Series) -> float:
     http_ms = row.get("http_ms", row.get("latency_ms"))
     http_ms = float(http_ms) if pd.notna(http_ms) else 9999.0
 
-    # Base timing score: 0ms=>100, 300ms=>~37, 1200ms=>~2
     timing = 100.0 * math.exp(-http_ms / 300.0)
 
     status = row.get("status_code")
@@ -171,13 +159,14 @@ def main() -> None:
 
     df = pd.read_csv(LOG_PATH)
 
-    # minimal required columns for scoring pipeline
     require_columns(df, ["timestamp", "probe_type", "service_name", "success"])
 
     # If Utku-style "mode" exists, keep baseline only (prevents future mode mixing)
+    mode_filter_applied = False
     if "mode" in df.columns:
         df["mode"] = df["mode"].astype(str)
         df = df[df["mode"] == BASELINE_MODE_NAME].copy()
+        mode_filter_applied = True
 
     # Parse + normalize time
     df["timestamp"] = parse_timestamp(df["timestamp"])
@@ -189,7 +178,7 @@ def main() -> None:
     # Convenience column
     df["hour"] = df["timestamp"].dt.hour
 
-    # Optional: extract throughput_mbps for HTTP rows if present in details
+    # Optional: extract throughput_mbps
     if "details" in df.columns:
         df["throughput_mbps"] = extract_throughput_mbps(df["details"])
     else:
@@ -216,9 +205,10 @@ def main() -> None:
     df = df.sort_values(sort_cols).reset_index(drop=True)
 
     # Save row-level enriched data
+    # IMPORTANT: this will keep "mode" column if it exists (we don't drop it)
     df.to_csv(OUT_ROWS_PATH, index=False)
 
-    # Hourly summary (all services, all probes)
+    # Hourly summary
     hourly = (
         df.groupby("hour")
         .agg(
@@ -255,7 +245,7 @@ def main() -> None:
     print(f"Saved: {OUT_HOURLY_PATH}")
     print(f"Saved: {OUT_SERVICE_PATH}")
     print(f"Rows scored: {len(df)}")
-    if "mode" in df.columns:
+    if mode_filter_applied:
         print(f"Mode filter applied: mode == '{BASELINE_MODE_NAME}'")
 
 

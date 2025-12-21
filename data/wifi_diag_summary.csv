@@ -1,0 +1,2 @@
+diagnosis,gateway_last,google_last,total_windows
+inconclusive_missing_gateway,missing,lat=44.95ms jit=30.3ms loss=0.0% bad=True n=10,16

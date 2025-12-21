@@ -56,8 +56,10 @@ SEV_1_BAD_PCT = 50.0
 SEV_2_BAD_PCT = 60.0
 SEV_3_BAD_PCT = 80.0
 
-# Diagnosis threshold: how many services affected => "network-wide"
 NETWORK_WIDE_MIN_AFFECTED_SERVICES = 8
+
+# If quality_rows has 'mode' (from Utku baseline logger), restrict to baseline here too.
+BASELINE_MODE_NAME = "baseline"
 
 
 def ensure_tz(ts: pd.Series) -> pd.Series:
@@ -128,18 +130,6 @@ def severity_from(window_score_z: float, bad_pct: float) -> int:
 
 
 def merge_bad_windows(w: pd.DataFrame) -> pd.DataFrame:
-    """
-    Merge consecutive bad windows into intervals.
-
-    Weighted aggregation:
-      interval_mean_score = weighted by n_samples over windows
-      interval_bad_pct    = weighted by n_samples over windows
-      interval_mean_score_z = weighted by n_samples over windows (optional but nice)
-
-    Expects columns in w:
-      window_start, window_end, mean_score, bad_pct, n_samples,
-      flag_low_mean, flag_high_bad, is_bad_window, severity
-    """
     bad = w[w["is_bad_window"]].sort_values("window_start").reset_index(drop=True)
     if bad.empty:
         return pd.DataFrame(
@@ -235,12 +225,6 @@ def merge_bad_windows(w: pd.DataFrame) -> pd.DataFrame:
 
 
 def attribute_services(df_rows: pd.DataFrame, intervals: pd.DataFrame, top_k: int = 3) -> pd.DataFrame:
-    """
-    Adds columns:
-      affected_services_count
-      top_services_by_bad_pct   (e.g. 'gateway(100%),discord(92%),...')
-      top_services_by_count     (e.g. 'youtube(123),google(120),...')
-    """
     intervals = intervals.copy()
 
     if intervals.empty or "service_name" not in df_rows.columns:
@@ -293,11 +277,6 @@ def attribute_services(df_rows: pd.DataFrame, intervals: pd.DataFrame, top_k: in
 
 
 def add_diagnosis(intervals: pd.DataFrame) -> pd.DataFrame:
-    """
-    Adds columns:
-      gateway_involved (bool)
-      diagnosis: 'network_wide' or 'service_specific'
-    """
     intervals = intervals.copy()
 
     intervals["gateway_involved"] = (
@@ -308,9 +287,7 @@ def add_diagnosis(intervals: pd.DataFrame) -> pd.DataFrame:
 
     def diag(row) -> str:
         affected = int(row.get("affected_services_count", 0))
-        if affected >= NETWORK_WIDE_MIN_AFFECTED_SERVICES:
-            return "network_wide"
-        return "service_specific"
+        return "network_wide" if affected >= NETWORK_WIDE_MIN_AFFECTED_SERVICES else "service_specific"
 
     intervals["diagnosis"] = intervals.apply(diag, axis=1)
     return intervals
@@ -326,6 +303,13 @@ def main() -> None:
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Missing columns in {IN_PATH}: {sorted(missing)}")
+
+    # Baseline-only if mode exists (prevents mixing when you add wifi_diag later)
+    mode_filter_applied = False
+    if "mode" in df.columns:
+        df["mode"] = df["mode"].astype(str)
+        df = df[df["mode"] == BASELINE_MODE_NAME].copy()
+        mode_filter_applied = True
 
     df["timestamp"] = ensure_tz(df["timestamp"])
     df = df.dropna(subset=["timestamp"]).copy()
@@ -354,7 +338,6 @@ def main() -> None:
     windows["flag_high_bad"] = windows["bad_pct"] >= BAD_PCT_THRESHOLD
     windows["is_bad_window"] = windows["flag_low_mean"] | windows["flag_high_bad"]
 
-    # severity (standardized by z)
     windows["severity"] = windows.apply(
         lambda r: severity_from(float(r["window_score_z"]), float(r["bad_pct"])),
         axis=1,
@@ -371,7 +354,6 @@ def main() -> None:
         intervals["mean_score_z"] = 0.0
     intervals["mean_score_z"] = intervals["mean_score_z"].round(2)
 
-    # NEW: delta in raw score units (interpretable)
     intervals["mean_score_delta"] = (intervals["mean_score"] - global_mean).round(2)
 
     intervals.to_csv(OUT_PATH, index=False)
@@ -382,6 +364,8 @@ def main() -> None:
     print(f"Global mean score: {global_mean:.2f}")
     print(f"Global std score:  {global_std:.2f}")
     print(f"Saved: {OUT_PATH}")
+    if mode_filter_applied:
+        print(f"Mode filter applied: mode == '{BASELINE_MODE_NAME}'")
 
     if intervals.empty:
         print("No bad intervals detected with current thresholds.")

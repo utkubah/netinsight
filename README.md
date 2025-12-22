@@ -7,63 +7,47 @@ It runs simple network probes at regular intervals and logs **structured data**
 for later analysis — instead of just printing raw ping output.
 
 ---
+# NetInsight
+
+NetInsight is a small Python tool that logs network health in a structured way
+(ping, DNS, HTTP, simple bandwidth) so you can later see **when** and **why**
+your internet misbehaves (Wi-Fi, ISP, blocking, app/server issues).
 
 ## Modes
 
-NetInsight has multiple modes, each with its own script and CSV file:
+- **Baseline (24/7)**  
+  - Script: `src/main.py`  
+  - Log: `data/netinsight_log.csv`  
+  - Every 30s, runs `ping`, `dns`, `http` for each service in `targets_config.py`.  
+  - Metrics: latency, jitter, packet loss, dns_ms, http_ms, HTTP status, error_kind, and
+    an approximate HTTP `throughput_mbps` per request (in the `details` field).
 
-### 1. Baseline mode (24/7)
+- **Wi-Fi diag**  
+  - Script: `src/mode_wifi_diag.py`  
+  - Log: `data/netinsight_wifi_diag.csv`  
+  - Short burst of pings to:
+    - `gateway` (local router)
+    - `google` (external baseline)  
+  - Used to separate “Wi-Fi/local problem” from “ISP/internet problem”.
 
-- **Script:** `src/main.py`
-- **Log file:** `data/netinsight_log.csv`
-- **What it does:**
-  - Every `INTERVAL_SECONDS` (default 30s), for each service in
-    `targets_config.SERVICES`, it runs:
-    - `ping` (ICMP) if enabled
-    - `DNS` resolution if enabled
-    - `HTTP(S)` GET if enabled
-  - Each probe writes one row with:
-    - timestamp, mode, round_id, service_name, hostname, url, tags
-    - probe_type (`ping`, `dns`, `http`)
-    - core metrics (latency, jitter, packet loss, dns_ms, http_ms, etc.)
-    - `error_kind` + `error_message`
-    - a per-request HTTP throughput estimate (`throughput_mbps`) in `details`
+- **Speedtest**  
+  - Script: `src/mode_speedtest.py`  
+  - No CSV (just prints for now).  
+  - Runs a single speedtest (ping + download/upload Mbps) using `speedtest-cli`.
 
-This is the **main "black box flight recorder"** for your connection.
-
-### 2. Wi-Fi vs ISP diagnostic mode (in future add selection of external baseline)
-
-- **Script:** `src/mode_wifi_diag.py`
-- **Log file:** `data/netinsight_wifi_diag.csv`
-- **What it does:**
-  - Pings two targets in a short burst (e.g. 20 rounds, 1s apart):
-    - `gateway` → local router (service named `"gateway"` in `targets_config`)
-    - `google`  → external baseline (service named `"google"`)
-  - Logs only ping metrics for roles `"gateway"` and `"google"`:
-    - latency_avg, latency_p95, jitter, packet_loss_pct, error_kind
-- **Why:** helps distinguish:
-  - Wi-Fi / local network issues vs
-  - ISP / external path issues.
-
-### 3. Speedtest mode (bandwidth snapshot)
-
-- **Script:** `src/mode_speedtest.py`
-- **Log file:** currently just prints to stdout (can be logged later).
-- **What it does:**
-  - Runs a single speedtest using the `speedtest` Python module
-    (`speedtest-cli`) and prints:
-    - speedtest server name + sponsor
-    - ping (ms)
-    - download Mbps
-    - upload Mbps
-- **Why:** gives a direct measurement of available bandwidth at a point in time.
-
-
-### 4.  Service Health & Blocked-Site 
-
-Focuses on a small set of services (e.g. Discord, YouTube, Bocconi, GitHub) and aggressively probes them to answer “is this service actually down globally, or just blocked/broken on my network?”, combining status codes, latency and `error_kind` to distinguish true outages from DNS blocking, connection resets or TLS issues. Main mode can advice user to activate 
-this specific service health mode 
-
+- **Service health / blocked sites**  
+  - Script: `src/mode_service_health.py`  
+  - Log: `data/netinsight_service_health.csv`  
+  - For each service, runs ping/dns/http once (if enabled) and classifies it as:
+    - `healthy`
+    - `dns_failure`
+    - `service_server_error` (5xx)
+    - `client_or_access_error` (4xx)
+    - `possible_blocked_or_restricted` (e.g. DNS + HTTP DNS errors, 403/451, etc.)
+    - `connection_issue_or_blocked`
+    - `connectivity_issue_or_firewall`
+    - `no_probes_configured`
+    - `inconclusive`
 
 ---
 
@@ -168,9 +152,14 @@ Per service (if HTTP enabled):
 
 ## Putting it together: diagnosing “what’s wrong with my internet?”
 
-NetInsight doesn’t magically know your ISP’s secrets, but by combining metrics
-from **baseline**, **wifi_diag**, and **speedtest**, it can strongly suggest
-*where* problems are coming from.
+Combining the data from:
+
+- long-term baseline data (`netinsight_log.csv`),
+- focused Wi-Fi vs ISP bursts (`netinsight_wifi_diag.csv`),
+- occasional bandwidth snapshots (speedtest),
+- and per-service health snapshots (`netinsight_service_health.csv`),
+
+Netinsight can strongly suggest *where* problems are coming from.
 
 ### 1. Wi-Fi / local network problems
 

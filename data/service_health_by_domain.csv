@@ -1,0 +1,4 @@
+service_name,connection_issue_or_blocked,healthy,runs_total,healthy_pct,blockedish_pct
+discord.com,1,0,1,0.0,100.0
+github.com,0,1,1,100.0,0.0
+youtube.com,0,1,1,100.0,0.0

@@ -1,9 +1,12 @@
 # src/mode_service_health.py
 """
-Single-domain service health / blocked-site diagnostic.
+NetInsight service health mode (refactored).
 
-Usage:
-    python src/mode_service_health.py -n discord.com
+Key improvement:
+- classification logic is a pure function: classify_service_state(...)
+- I/O (running probes, writing CSV, printing) is separate
+
+This makes the code easier to test and easier to justify in a report.
 """
 
 import argparse
@@ -24,7 +27,6 @@ CSV_HEADERS = [
     "service_name",
     "hostname",
     "url",
-    "tags",
     "ping_ok",
     "dns_ok",
     "http_ok",
@@ -37,86 +39,65 @@ CSV_HEADERS = [
 ]
 
 
+def classify_service_state(ping_res, dns_res, http_res):
+    """
+    Pure classification function.
+
+    Inputs are dicts returned by ping_check.run_ping, dns_check.run_dns, http_check.run_http.
+    Returns (service_state, reason_string).
+    """
+    ping_ok = bool(ping_res) and ping_res.get("received", 0) > 0
+    dns_ok = bool(dns_res) and bool(dns_res.get("ok"))
+    http_ok = bool(http_res) and bool(http_res.get("ok"))
+
+    http_status = http_res.get("status_code") if http_res else None
+    http_ek = http_res.get("error_kind") if http_res else None
+
+    # 1) Clean healthy case
+    if dns_ok and http_ok:
+        return "healthy", "DNS and HTTP OK"
+
+    # 2) DNS failures
+    if not dns_ok:
+        if http_ek == "http_dns_error":
+            return "possible_blocked_or_restricted", "DNS failing + HTTP DNS error (possible DNS blocking)"
+        return "dns_failure", f"DNS failed ({dns_res.get('error_kind') if dns_res else 'unknown'})"
+
+    # 3) DNS OK but HTTP problems
+    if dns_ok and http_res:
+        if isinstance(http_status, int) and 500 <= http_status <= 599:
+            return "service_server_error", f"Server returned {http_status}"
+        if isinstance(http_status, int) and 400 <= http_status <= 499:
+            return "client_or_access_error", f"Client/access error {http_status}"
+        if http_ek in ("http_timeout", "http_connection_error", "http_connection_reset"):
+            return "connection_issue_or_blocked", f"HTTP connection problem ({http_ek})"
+        return "inconclusive", "DNS OK but HTTP failed in an unclassified way"
+
+    # 4) DNS OK but HTTP missing (shouldn't happen normally, but handle safely)
+    if dns_ok and http_res is None:
+        if not ping_ok:
+            return "connectivity_issue_or_firewall", "DNS OK but ping failed and HTTP missing"
+        return "inconclusive", "DNS OK but HTTP missing"
+
+    return "inconclusive", "Could not classify reliably"
+
+
 def check_domain_health(domain):
+    """
+    Runs probes, classifies state, writes one CSV row, returns the row dict.
+    """
     hostname = domain
     url = f"https://{domain}"
-    tags = ""
 
-    ping_result = ping_check.run_ping(hostname, count=3, timeout=0.7)
-    dns_result = dns_check.run_dns(hostname, timeout=1.0)
-    http_result = http_check.run_http(url, timeout=1.5)
+    ping_res = ping_check.run_ping(hostname, count=3, timeout=0.7)
+    dns_res = dns_check.run_dns(hostname, timeout=1.0)
+    http_res = http_check.run_http(url, timeout=1.5)
 
-    ping_ok = False
-    dns_ok = False
-    http_ok = False
+    ping_ok = ping_res.get("received", 0) > 0
+    dns_ok = bool(dns_res.get("ok"))
+    http_ok = bool(http_res.get("ok")) if http_res else False
 
-    ping_error_kind = None
-    dns_error_kind = None
-    http_error_kind = None
-    http_status_code = None
-
-    if ping_result is not None:
-        ping_ok = ping_result.get("received", 0) > 0
-        ping_error_kind = ping_result.get("error_kind")
-
-    if dns_result is not None:
-        dns_ok = bool(dns_result.get("ok"))
-        dns_error_kind = dns_result.get("error_kind")
-
-    if http_result is not None:
-        http_ok = bool(http_result.get("ok"))
-        http_error_kind = http_result.get("error_kind")
-        http_status_code = http_result.get("status_code")
-
-    state = "inconclusive"
-    reason = ""
-
-    if ping_result is None and dns_result is None and http_result is None:
-        state = "no_probes_configured"
-        reason = "No ping/dns/http available for this domain."
-    else:
-        code = http_status_code or 0
-        ek_http = http_error_kind or ""
-        ek_dns = dns_error_kind or ""
-
-        if dns_ok and http_ok:
-            state = "healthy"
-            reason = "DNS ok and HTTP returned a successful 2xx/3xx response."
-        elif not dns_ok and dns_result is not None:
-            if http_result is not None and ek_http == "http_dns_error":
-                state = "possible_blocked_or_restricted"
-                reason = "DNS failing at resolver and HTTP layer; may indicate DNS-level blocking or filtering."
-            else:
-                state = "dns_failure"
-                reason = f"DNS failed ({ek_dns}); could be local DNS issues or blocking."
-        elif dns_ok and http_result is not None and not http_ok:
-            if code in (403, 451):
-                state = "possible_blocked_or_restricted"
-                reason = f"DNS ok, HTTP status {code}; access may be region-blocked or restricted by server/ISP."
-            elif ek_http in ("http_connection_reset", "http_timeout", "http_connection_error"):
-                state = "connection_issue_or_blocked"
-                reason = f"DNS ok, HTTP error_kind={ek_http}; could be firewalling, filtering, or unstable upstream connection."
-            elif ek_http == "http_dns_error":
-                state = "possible_blocked_or_restricted"
-                reason = "DNS ok at resolver, but HTTP reports DNS error; may indicate proxying or DPI interfering with requests."
-            elif 500 <= code < 600:
-                state = "service_server_error"
-                reason = f"DNS ok, server returns {code} (5xx)."
-            elif 400 <= code < 500:
-                state = "client_or_access_error"
-                reason = f"DNS ok, server returns {code} (4xx)."
-            elif ping_ok:
-                state = "connection_issue_or_blocked"
-                reason = "DNS ok and ping ok, but HTTP failing; could be filtered or partially blocked."
-            else:
-                state = "inconclusive"
-                reason = f"DNS ok but HTTP failed (status={code}, error_kind={ek_http})."
-        elif dns_ok and http_result is None and not ping_ok:
-            state = "connectivity_issue_or_firewall"
-            reason = "DNS ok but ping fails and no HTTP result; could be ICMP blocked or deeper connectivity problem."
-        else:
-            state = "inconclusive"
-            reason = f"ping_ok={ping_ok}, dns_ok={dns_ok}, http_ok={http_ok}; cannot cleanly classify."
+    service_state, reason = classify_service_state(ping_res, dns_res, http_res)
 
     row = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -124,15 +105,14 @@ def check_domain_health(domain):
         "service_name": domain,
         "hostname": hostname,
         "url": url,
-        "tags": tags,
         "ping_ok": ping_ok,
         "dns_ok": dns_ok,
         "http_ok": http_ok,
-        "ping_error_kind": ping_error_kind,
-        "dns_error_kind": dns_error_kind,
-        "http_error_kind": http_error_kind,
-        "http_status_code": http_status_code,
-        "service_state": state,
+        "ping_error_kind": ping_res.get("error_kind"),
+        "dns_error_kind": dns_res.get("error_kind"),
+        "http_error_kind": http_res.get("error_kind") if http_res else None,
+        "http_status_code": http_res.get("status_code") if http_res else None,
+        "service_state": service_state,
         "service_reason": reason,
     }
 
@@ -148,12 +128,12 @@ def check_domain_health(domain):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Single-domain service health / blocked-site check.")
-    parser.add_argument("-n", "--name", required=True, help="Domain name to check (e.g. discord.com)")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-n", "--name", required=True, help="domain to check")
     args = parser.parse_args()
 
     row = check_domain_health(args.name)
-    print(f"{row['service_name']}: {row['service_state']} – {row['service_reason']}")
+    print(f"{row['service_name']}: {row['service_state']} - {row['service_reason']}")
 
 
 if __name__ == "__main__":

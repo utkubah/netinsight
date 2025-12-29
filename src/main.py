@@ -1,20 +1,19 @@
 # src/main.py
 """
-NetInsight baseline logger.
+NetInsight baseline logger (simple).
 
-Every INTERVAL_SECONDS, iterate over targets_config.SERVICES and run ping/dns/http
-as enabled. Write one CSV row per probe to data/netinsight_log.csv.
+Every INTERVAL_SECONDS, iterate over targets_config.SERVICES and run enabled
+probes. Write one CSV row per probe to data/netinsight_log.csv.
 """
-
 import csv
 import os
 import time
 from datetime import datetime, timezone
 
+from targets_config import SERVICES
 import ping_check
 import dns_check
 import http_check
-import targets_config  # <-- import the module so we read SERVICES at runtime
 
 INTERVAL_SECONDS = 30
 LOG_PATH = os.path.join("data", "netinsight_log.csv")
@@ -42,10 +41,6 @@ CSV_HEADERS = [
 
 
 def run_once(round_id=None):
-    """
-    Run a single round of probes for all configured SERVICES and append CSV rows.
-    If round_id is None, generate one from current UTC time.
-    """
     if round_id is None:
         round_id = datetime.now(timezone.utc).isoformat()
 
@@ -57,134 +52,103 @@ def run_once(round_id=None):
         if not file_exists:
             writer.writeheader()
 
-        ping_count = 0
-        dns_count = 0
-        http_count = 0
+        ping_count = dns_count = http_count = 0
 
-        # NOTE: read SERVICES from the module so tests can monkeypatch targets_config.SERVICES
-        for svc in targets_config.SERVICES:
+        for svc in SERVICES:
             name = svc.get("name")
             hostname = svc.get("hostname")
             url = svc.get("url")
             tags = svc.get("tags", [])
             tags_str = ",".join(tags)
 
-            # --- PING ----------------------------------------------------
+            # PING
             ping_cfg = svc.get("ping", {})
-            if ping_cfg.get("enabled", False) and hostname:
+            if ping_cfg.get("enabled") and hostname:
                 count = ping_cfg.get("count", 5)
                 timeout = ping_cfg.get("timeout", 1.0)
-
-                ping_result = ping_check.run_ping(hostname, count=count, timeout=timeout)
+                res = ping_check.run_ping(hostname, count=count, timeout=timeout)
 
                 row = {k: None for k in CSV_HEADERS}
-                row["timestamp"] = datetime.now(timezone.utc).isoformat()
-                row["mode"] = MODE_NAME
-                row["round_id"] = round_id
-                row["service_name"] = name
-                row["hostname"] = hostname
-                row["url"] = url
-                row["tags"] = tags_str
-                row["probe_type"] = "ping"
-                row["success"] = ping_result.get("received", 0) > 0
-                row["latency_ms"] = ping_result.get("latency_avg_ms")
-                row["latency_p95_ms"] = ping_result.get("latency_p95_ms")
-                row["jitter_ms"] = ping_result.get("jitter_ms")
-                row["packet_loss_pct"] = ping_result.get("packet_loss_pct")
-                row["status_code"] = None
-                row["error_kind"] = ping_result.get("error_kind")
-                row["error_message"] = ping_result.get("error")
-
-                lat_list = ping_result.get("latencies_ms") or []
-                if lat_list:
-                    samples_str = ";".join(f"{x:.2f}" for x in lat_list)
-                    row["details"] = f"samples={samples_str}"
-                else:
-                    row["details"] = ""
-
+                row.update({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "mode": MODE_NAME,
+                    "round_id": round_id,
+                    "service_name": name,
+                    "hostname": hostname,
+                    "url": url,
+                    "tags": tags_str,
+                    "probe_type": "ping",
+                    "success": res.get("received", 0) > 0,
+                    "latency_ms": res.get("latency_avg_ms"),
+                    "latency_p95_ms": res.get("latency_p95_ms"),
+                    "jitter_ms": res.get("jitter_ms"),
+                    "packet_loss_pct": res.get("packet_loss_pct"),
+                    "status_code": None,
+                    "error_kind": res.get("error_kind"),
+                    "error_message": res.get("error"),
+                })
+                # details: samples
+                lat_list = res.get("latencies_ms") or []
+                row["details"] = f"samples={'|'.join(f'{x:.1f}' for x in lat_list)}" if lat_list else ""
                 writer.writerow(row)
                 ping_count += 1
 
-            # --- DNS ----------------------------------------------------
+            # DNS
             dns_cfg = svc.get("dns", {})
-            if dns_cfg.get("enabled", False) and hostname:
-                dns_timeout = dns_cfg.get("timeout", 2.0)
-
-                dns_result = dns_check.run_dns(hostname, timeout=dns_timeout)
+            if dns_cfg.get("enabled") and hostname:
+                timeout = dns_cfg.get("timeout", 2.0)
+                res = dns_check.run_dns(hostname, timeout=timeout)
 
                 row = {k: None for k in CSV_HEADERS}
-                row["timestamp"] = datetime.now(timezone.utc).isoformat()
-                row["mode"] = MODE_NAME
-                row["round_id"] = round_id
-                row["service_name"] = name
-                row["hostname"] = hostname
-                row["url"] = url
-                row["tags"] = tags_str
-                row["probe_type"] = "dns"
-                row["success"] = bool(dns_result.get("ok"))
-                row["latency_ms"] = dns_result.get("dns_ms")
-                row["latency_p95_ms"] = None
-                row["jitter_ms"] = None
-                row["packet_loss_pct"] = None
-                row["status_code"] = None
-                row["error_kind"] = dns_result.get("error_kind")
-                row["error_message"] = dns_result.get("error")
-
-                ip = dns_result.get("ip")
-                if ip:
-                    row["details"] = f"ip={ip}"
-                else:
-                    row["details"] = ""
-
+                row.update({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "mode": MODE_NAME,
+                    "round_id": round_id,
+                    "service_name": name,
+                    "hostname": hostname,
+                    "url": url,
+                    "tags": tags_str,
+                    "probe_type": "dns",
+                    "success": bool(res.get("ok")),
+                    "latency_ms": res.get("dns_ms"),
+                    "error_kind": res.get("error_kind"),
+                    "error_message": res.get("error"),
+                    "details": f"ip={res.get('ip')}" if res.get("ip") else "",
+                })
                 writer.writerow(row)
                 dns_count += 1
 
-            # --- HTTP ---------------------------------------------------
+            # HTTP
             http_cfg = svc.get("http", {})
-            if http_cfg.get("enabled", False) and url:
-                http_timeout = http_cfg.get("timeout", 3.0)
-
-                http_result = http_check.run_http(url, timeout=http_timeout)
+            if http_cfg.get("enabled") and url:
+                timeout = http_cfg.get("timeout", 3.0)
+                res = http_check.run_http(url, timeout=timeout)
 
                 row = {k: None for k in CSV_HEADERS}
-                row["timestamp"] = datetime.now(timezone.utc).isoformat()
-                row["mode"] = MODE_NAME
-                row["round_id"] = round_id
-                row["service_name"] = name
-                row["hostname"] = hostname
-                row["url"] = url
-                row["tags"] = tags_str
-                row["probe_type"] = "http"
-                row["success"] = bool(http_result.get("ok"))
-                row["latency_ms"] = http_result.get("http_ms")
-                row["latency_p95_ms"] = None
-                row["jitter_ms"] = None
-                row["packet_loss_pct"] = None
-                row["status_code"] = http_result.get("status_code")
-                row["error_kind"] = http_result.get("error_kind")
-                row["error_message"] = http_result.get("error")
+                row.update({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "mode": MODE_NAME,
+                    "round_id": round_id,
+                    "service_name": name,
+                    "hostname": hostname,
+                    "url": url,
+                    "tags": tags_str,
+                    "probe_type": "http",
+                    "success": bool(res.get("ok")),
+                    "latency_ms": res.get("http_ms"),
+                    "status_code": res.get("status_code"),
+                    "error_kind": res.get("error_kind"),
+                    "error_message": res.get("error"),
+                })
 
-                details_parts = []
-
-                status_class = http_result.get("status_class")
-                if status_class is not None:
-                    details_parts.append(f"status_class={status_class}")
-
-                bytes_downloaded = http_result.get("bytes")
-                if bytes_downloaded is not None:
-                    details_parts.append(f"bytes={bytes_downloaded}")
-
-                redirects = http_result.get("redirects")
-                if redirects is not None:
-                    details_parts.append(f"redirects={redirects}")
-
-                http_ms = http_result.get("http_ms")
-                if isinstance(bytes_downloaded, (int, float)) and isinstance(http_ms, (int, float)) and http_ms > 0:
-                    throughput_mbps = (bytes_downloaded * 8 / 1_000_000.0) / (http_ms / 1000.0)
-                    details_parts.append(f"throughput_mbps={throughput_mbps:.3f}")
-
-                row["details"] = ";".join(details_parts)
-
+                details = []
+                if res.get("status_class"):
+                    details.append(f"status_class={res.get('status_class')}")
+                if res.get("bytes") is not None:
+                    details.append(f"bytes={res.get('bytes')}")
+                if res.get("redirects") is not None:
+                    details.append(f"redirects={res.get('redirects')}")
+                row["details"] = ";".join(details)
                 writer.writerow(row)
                 http_count += 1
 
@@ -192,10 +156,9 @@ def run_once(round_id=None):
 
 
 def main():
-    print(f"NetInsight baseline logger starting: interval={INTERVAL_SECONDS}s, mode={MODE_NAME}")
+    print(f"NetInsight baseline logger starting: interval={INTERVAL_SECONDS}s")
     while True:
-        round_id = datetime.now(timezone.utc).isoformat()
-        run_once(round_id)
+        run_once()
         time.sleep(INTERVAL_SECONDS)
 
 

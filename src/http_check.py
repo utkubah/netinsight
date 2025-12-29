@@ -2,78 +2,25 @@
 """
 HTTP probe for NetInsight.
 
-This module performs a simple HTTP(S) GET using `requests` and measures how
-fast the request completes and how the server responds.
-
-Metrics:
-  - http_ms:
-      Total time from before requests.get() to after we get a response or error.
-      High http_ms with low ping can mean the server or path is slow.
-  - status_code:
-      HTTP status (e.g. 200, 301, 404, 503) or None on network failure.
-  - status_class:
-      Coarse class derived from status_code:
-        * "2xx"   -> success
-        * "3xx"   -> redirects
-        * "4xx"   -> client errors (not found, forbidden, etc.)
-        * "5xx"   -> server errors
-        * "other" -> anything else (e.g. 1xx or weird status)
-        * None    -> no HTTP response at all (DNS / connection error)
-  - bytes:
-      Size of the response body in bytes (approx). Gives a sense of how big
-      the content is; useful later when reasoning about throughput.
-  - redirects:
-      Number of redirect hops followed by requests (len(resp.history)).
-  - ok:
-      True for 2xx/3xx, False otherwise.
-  - error_kind:
-      Classified network/transport failure when we don't get a clean response:
-        * "http_timeout"
-        * "http_ssl_error"
-        * "http_connection_reset"
-        * "http_connection_error"
-        * "http_dns_error"
-        * "http_4xx", "http_5xx", "http_other_status"
-        * "http_other_error"
-  - error:
-      Raw exception string (if any), useful for debugging.
-
-Together with ping/DNS, this lets us say things like:
-  - "HTTP to Netflix is OK but ping is blocked (ICMP disabled)."
-  - "Discord fails at DNS layer: http_dns_error despite healthy ping."
-  - "Gateway is timing out on HTTP while Google is fast -> router not serving HTTP."
+Performs a simple GET request with requests and classifies errors.
+Returns a dict with keys:
+  url, ok, status_code, status_class, http_ms, bytes, redirects, error, error_kind
 """
 
 import time
-from typing import Any, Dict, Optional
-
 import requests
 from requests import exceptions as req_exc
 
 
-def run_http(url: str, timeout: float = 3.0) -> Dict[str, Any]:
-    """
-    Perform a simple HTTP GET using requests.get and measure total time.
-
-    Returns a dict with:
-      - url: str
-      - ok: bool
-      - status_code: int | None
-      - status_class: str | None
-      - http_ms: float | None
-      - bytes: int | None
-      - redirects: int | None
-      - error: str | None
-      - error_kind: str
-    """
+def run_http(url, timeout=3.0):
     start = time.monotonic()
-    status_code: Optional[int] = None
-    status_class: Optional[str] = None
-    http_ms: Optional[float] = None
-    bytes_downloaded: Optional[int] = None
-    redirects: Optional[int] = None
+    status_code = None
+    status_class = None
+    http_ms = None
+    bytes_downloaded = None
+    redirects = None
     ok = False
-    error: Optional[str] = None
+    error = None
     error_kind = "ok"
 
     try:
@@ -89,7 +36,7 @@ def run_http(url: str, timeout: float = 3.0) -> Dict[str, Any]:
             error_kind = "ok"
         elif 300 <= status_code < 400:
             status_class = "3xx"
-            ok = True  # redirects usually still mean "reachable"
+            ok = True
             error_kind = "ok"
         elif 400 <= status_code < 500:
             status_class = "4xx"
@@ -118,14 +65,10 @@ def run_http(url: str, timeout: float = 3.0) -> Dict[str, Any]:
         http_ms = (time.monotonic() - start) * 1000.0
         ok = False
         error = str(e)
-        msg = error.lower()
+        msg = (error or "").lower()
         if "connection reset by peer" in msg:
             error_kind = "http_connection_reset"
-        elif (
-            "failed to resolve" in msg
-            or "name or service not known" in msg
-            or "temporary failure in name resolution" in msg
-        ):
+        elif "failed to resolve" in msg or "name or service not known" in msg or "temporary failure in name resolution" in msg:
             error_kind = "http_dns_error"
         else:
             error_kind = "http_connection_error"

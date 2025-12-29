@@ -2,18 +2,8 @@
 """
 NetInsight baseline logger.
 
-This script runs the "baseline" 24/7 mode:
-- every INTERVAL_SECONDS, it iterates over SERVICES
-- for each service, it runs ping / DNS / HTTP if enabled
-- logs one row per probe to data/netinsight_log.csv
-
-The CSV includes:
-- core metrics (latency, jitter, packet loss, dns_ms, http_ms, status_code)
-- error_kind / error_message for classification
-- a lightweight per-request throughput estimate for HTTP probes
-  (throughput_mbps in the details column)
-
-Other modes (wifi_diag, speedtest) live in separate files and CSVs.
+Every INTERVAL_SECONDS, iterate over targets_config.SERVICES and run ping/dns/http
+as enabled. Write one CSV row per probe to data/netinsight_log.csv.
 """
 
 import csv
@@ -24,7 +14,7 @@ from datetime import datetime, timezone
 import ping_check
 import dns_check
 import http_check
-from targets_config import SERVICES
+import targets_config  # <-- import the module so we read SERVICES at runtime
 
 INTERVAL_SECONDS = 30
 LOG_PATH = os.path.join("data", "netinsight_log.csv")
@@ -53,9 +43,8 @@ CSV_HEADERS = [
 
 def run_once(round_id=None):
     """
-    Run one measurement round over all configured SERVICES.
-
-    If round_id is not provided, it will be generated from the current UTC time.
+    Run a single round of probes for all configured SERVICES and append CSV rows.
+    If round_id is None, generate one from current UTC time.
     """
     if round_id is None:
         round_id = datetime.now(timezone.utc).isoformat()
@@ -72,7 +61,8 @@ def run_once(round_id=None):
         dns_count = 0
         http_count = 0
 
-        for svc in SERVICES:
+        # NOTE: read SERVICES from the module so tests can monkeypatch targets_config.SERVICES
+        for svc in targets_config.SERVICES:
             name = svc.get("name")
             hostname = svc.get("hostname")
             url = svc.get("url")
@@ -87,7 +77,7 @@ def run_once(round_id=None):
 
                 ping_result = ping_check.run_ping(hostname, count=count, timeout=timeout)
 
-                row = {key: None for key in CSV_HEADERS}
+                row = {k: None for k in CSV_HEADERS}
                 row["timestamp"] = datetime.now(timezone.utc).isoformat()
                 row["mode"] = MODE_NAME
                 row["round_id"] = round_id
@@ -122,7 +112,7 @@ def run_once(round_id=None):
 
                 dns_result = dns_check.run_dns(hostname, timeout=dns_timeout)
 
-                row = {key: None for key in CSV_HEADERS}
+                row = {k: None for k in CSV_HEADERS}
                 row["timestamp"] = datetime.now(timezone.utc).isoformat()
                 row["mode"] = MODE_NAME
                 row["round_id"] = round_id
@@ -156,7 +146,7 @@ def run_once(round_id=None):
 
                 http_result = http_check.run_http(url, timeout=http_timeout)
 
-                row = {key: None for key in CSV_HEADERS}
+                row = {k: None for k in CSV_HEADERS}
                 row["timestamp"] = datetime.now(timezone.utc).isoformat()
                 row["mode"] = MODE_NAME
                 row["round_id"] = round_id
@@ -188,36 +178,21 @@ def run_once(round_id=None):
                 if redirects is not None:
                     details_parts.append(f"redirects={redirects}")
 
-                # approximate throughput in Mbps if we have size + time
                 http_ms = http_result.get("http_ms")
-                if (
-                    isinstance(bytes_downloaded, (int, float))
-                    and isinstance(http_ms, (int, float))
-                    and http_ms > 0
-                ):
-                    throughput_mbps = (
-                        (bytes_downloaded * 8 / 1_000_000.0) / (http_ms / 1000.0)
-                    )
-                    details_parts.append(
-                        f"throughput_mbps={throughput_mbps:.3f}"
-                    )
+                if isinstance(bytes_downloaded, (int, float)) and isinstance(http_ms, (int, float)) and http_ms > 0:
+                    throughput_mbps = (bytes_downloaded * 8 / 1_000_000.0) / (http_ms / 1000.0)
+                    details_parts.append(f"throughput_mbps={throughput_mbps:.3f}")
 
                 row["details"] = ";".join(details_parts)
 
                 writer.writerow(row)
                 http_count += 1
 
-        print(
-            f"[round {round_id}] wrote {ping_count} ping, "
-            f"{dns_count} dns, {http_count} http rows"
-        )
+        print(f"[round {round_id}] wrote {ping_count} ping, {dns_count} dns, {http_count} http rows")
 
 
 def main():
-    print(
-        f"NetInsight baseline logger starting: "
-        f"interval={INTERVAL_SECONDS}s, mode={MODE_NAME}"
-    )
+    print(f"NetInsight baseline logger starting: interval={INTERVAL_SECONDS}s, mode={MODE_NAME}")
     while True:
         round_id = datetime.now(timezone.utc).isoformat()
         run_once(round_id)

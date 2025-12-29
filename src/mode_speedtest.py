@@ -1,12 +1,6 @@
 # src/mode_speedtest.py
 """
-Minimal Speedtest mode for NetInsight.
-
-Runs a single speedtest using the `speedtest` Python module (speedtest-cli)
-and prints ping, download and upload speeds.
-
-Usage:
-    python src/mode_speedtest.py
+Minimal Speedtest mode using speedtest-cli (speedtest.Speedtest).
 """
 
 import speedtest

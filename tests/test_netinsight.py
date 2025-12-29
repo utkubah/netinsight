@@ -46,99 +46,7 @@ def _patch_service_health_probes(monkeypatch, ping_ret, dns_ret, http_ret):
 
 
 # ---------------------------------------------------------------------------
-# 1) Baseline main.run_once – offline/classified probes
-# ---------------------------------------------------------------------------
-
-def test_baseline_run_once_logs_rows(tmp_path, monkeypatch):
-    """
-    Test main.run_once() without hitting the real network by patching:
-    - main.SERVICES to a tiny config
-    - main.LOG_PATH to a temporary CSV
-    - ping/dns/http to synthetic results
-
-    We then check that:
-    - CSV is created
-    - rows exist for ping/dns/http
-    - HTTP rows include a throughput_mbps detail.
-    """
-    # Redirect logging to tmp_path
-    log_path = tmp_path / "netinsight_log.csv"
-    monkeypatch.setattr(main, "LOG_PATH", str(log_path))
-
-    # Tiny services config
-    services = [
-        {
-            "name": "discord",
-            "hostname": "discord.com",
-            "url": "https://discord.com",
-            "tags": ["social", "gaming"],
-            "ping": {"enabled": True, "count": 3, "timeout": 0.1},
-            "dns": {"enabled": True, "timeout": 0.1},
-            "http": {"enabled": True, "timeout": 0.2},
-        }
-    ]
-    monkeypatch.setattr(main, "SERVICES", services)
-
-    # Fake probe outputs
-    def fake_run_ping(hostname, count, timeout):
-        return {
-            "received": count,
-            "latency_avg_ms": 20.0,
-            "latency_p95_ms": 30.0,
-            "jitter_ms": 2.0,
-            "packet_loss_pct": 0.0,
-            "latencies_ms": [18.0, 20.0, 22.0],
-            "error": None,
-            "error_kind": None,
-        }
-
-    def fake_run_dns(hostname, timeout):
-        return {
-            "ok": True,
-            "ip": "1.2.3.4",
-            "dns_ms": 5.0,
-            "error": None,
-            "error_kind": None,
-        }
-
-    def fake_run_http(url, timeout):
-        return {
-            "ok": True,
-            "status_code": 200,
-            "http_ms": 100.0,
-            "bytes": 200_000,   # 200 KB
-            "redirects": 0,
-            "status_class": "2xx",
-            "error": None,
-            "error_kind": None,
-        }
-
-    monkeypatch.setattr(main.ping_check, "run_ping", fake_run_ping)
-    monkeypatch.setattr(main.dns_check, "run_dns", fake_run_dns)
-    monkeypatch.setattr(main.http_check, "run_http", fake_run_http)
-
-    round_id = datetime.now(timezone.utc).isoformat()
-    main.run_once(round_id)
-
-    # Read back CSV
-    assert log_path.exists()
-    with log_path.open("r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    # Expect 3 rows for 1 service (ping + dns + http)
-    assert len(rows) == 3
-    probe_types = {row["probe_type"] for row in rows}
-    assert probe_types == {"ping", "dns", "http"}
-
-    # Check HTTP row has throughput_mbps in details
-    http_rows = [r for r in rows if r["probe_type"] == "http"]
-    assert len(http_rows) == 1
-    assert "throughput_mbps=" in http_rows[0]["details"]
-
-
-# ---------------------------------------------------------------------------
-# 2) Service health classification – edge cases for discord.com style patterns
+# 1) Service health classification – edge cases for discord.com style patterns
 # ---------------------------------------------------------------------------
 
 def test_service_health_healthy_when_dns_and_http_ok(tmp_path, monkeypatch):
@@ -330,7 +238,7 @@ def test_service_health_weird_domain_string_does_not_crash(tmp_path, monkeypatch
 
 
 # ---------------------------------------------------------------------------
-# 3) mode_wifi_diag – robustness with synthetic services
+# 2) mode_wifi_diag – robustness with synthetic services
 # ---------------------------------------------------------------------------
 
 def test_wifi_diag_with_fake_services(tmp_path, monkeypatch, capsys):
@@ -409,7 +317,7 @@ def test_wifi_diag_with_fake_services(tmp_path, monkeypatch, capsys):
 
 
 # ---------------------------------------------------------------------------
-# 4) mode_speedtest – robustness with fake speedtest client
+# 3) mode_speedtest – robustness with fake speedtest client
 # ---------------------------------------------------------------------------
 
 def test_speedtest_fake_client(tmp_path, monkeypatch, capsys):

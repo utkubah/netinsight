@@ -1,37 +1,9 @@
 # src/mode_wifi_diag.py
 """
-Wi-Fi vs ISP diagnostic mode for NetInsight.
+Wi-Fi vs ISP diagnostic mode.
 
-This mode runs a short, high-frequency ping test against:
-- a local "gateway" (service named 'gateway' in targets_config.SERVICES)
-- an external baseline "google" (service named 'google' in SERVICES)
-
-It logs only ping metrics (latency, jitter, packet loss, error_kind) to
-data/netinsight_wifi_diag.csv with mode=wifi_diag.
-
-HOW TO INTERPRET RESULTS (for analysis / summary):
-
-You get rows with:
-  - role = "gateway" or "google"
-  - latency_ms, latency_p95_ms, jitter_ms, packet_loss_pct, error_kind
-
-Heuristics:
-
-1. Likely Wi-Fi / local network problem:
-   - gateway has high jitter (>20–30 ms) and/or packet_loss_pct > ~5%
-   - and google is also bad or worse.
-   => Problem is before leaving your local network (Wi-Fi congestion,
-      interference, too many users, weak signal).
-
-2. Likely ISP / external path problem:
-   - gateway is stable (low latency, low jitter, ~0% loss)
-   - but google shows high latency/jitter/loss.
-   => Wi-Fi is fine; problem is on ISP / upstream / internet side.
-
-3. Wi-Fi congestion vs constant bad Wi-Fi:
-   - Congestion: gateway usually good, but during busy hours you see repeated
-     bursts of bad jitter/loss.
-   - Structural: gateway metrics are consistently bad most of the time.
+Pings gateway and google several times quickly and logs ping metrics to
+data/netinsight_wifi_diag.csv. Prints a short interpretation after the run.
 """
 
 import csv
@@ -45,16 +17,16 @@ from targets_config import SERVICES
 MODE_NAME = "wifi_diag"
 LOG_PATH = os.path.join("data", "netinsight_wifi_diag.csv")
 
-ROUNDS = 20           # how many rounds to run
-INTERVAL_SECONDS = 1  # seconds between rounds
-PING_COUNT = 5        # pings per host per round
-PING_TIMEOUT = 1.0    # seconds per ping
+ROUNDS = 20
+INTERVAL_SECONDS = 1
+PING_COUNT = 5
+PING_TIMEOUT = 1.0
 
 CSV_HEADERS = [
     "timestamp",
     "mode",
     "round_id",
-    "role",             # "gateway" or "google"
+    "role",  # "gateway" or "google"
     "target",
     "success",
     "latency_ms",
@@ -68,7 +40,6 @@ CSV_HEADERS = [
 
 
 def main():
-    # Find gateway and google from SERVICES
     gateway_host = None
     google_host = None
 
@@ -81,42 +52,18 @@ def main():
             google_host = host
 
     if gateway_host is None:
-        print(
-            "wifi_diag: no 'gateway' service with a hostname found in targets_config.SERVICES.\n"
-            "Please add something like:\n"
-            "  {'name': 'gateway', 'hostname': '192.168.1.1', ...}\n"
-        )
+        print("wifi_diag: no 'gateway' service with a hostname found in targets_config.SERVICES.")
         return
-
     if google_host is None:
-        print(
-            "wifi_diag: no 'google' service with a hostname found in targets_config.SERVICES.\n"
-            "Please add something like:\n"
-            "  {'name': 'google', 'hostname': 'www.google.com', ...}\n"
-        )
+        print("wifi_diag: no 'google' service with a hostname found in targets_config.SERVICES.")
         return
 
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
     file_exists = os.path.exists(LOG_PATH)
 
-    # simple accumulators for a tiny summary at the end
     stats = {
-        "gateway": {
-            "latency_sum": 0.0,
-            "latency_count": 0,
-            "jitter_sum": 0.0,
-            "jitter_count": 0,
-            "loss_sum": 0.0,
-            "loss_count": 0,
-        },
-        "google": {
-            "latency_sum": 0.0,
-            "latency_count": 0,
-            "jitter_sum": 0.0,
-            "jitter_count": 0,
-            "loss_sum": 0.0,
-            "loss_count": 0,
-        },
+        "gateway": {"latency_sum": 0.0, "latency_count": 0, "jitter_sum": 0.0, "jitter_count": 0, "loss_sum": 0.0, "loss_count": 0},
+        "google": {"latency_sum": 0.0, "latency_count": 0, "jitter_sum": 0.0, "jitter_count": 0, "loss_sum": 0.0, "loss_count": 0},
     }
 
     with open(LOG_PATH, "a", newline="", encoding="utf-8") as f:
@@ -124,10 +71,7 @@ def main():
         if not file_exists:
             writer.writeheader()
 
-        print(
-            f"NetInsight Wi-Fi diag starting: {ROUNDS} rounds, "
-            f"interval={INTERVAL_SECONDS}s, mode={MODE_NAME}"
-        )
+        print(f"NetInsight Wi-Fi diag starting: {ROUNDS} rounds, interval={INTERVAL_SECONDS}s, mode={MODE_NAME}")
         print(f"  gateway: {gateway_host}")
         print(f"  google:  {google_host}")
 
@@ -136,13 +80,9 @@ def main():
             timestamp = datetime.now(timezone.utc).isoformat()
 
             for role, host in (("gateway", gateway_host), ("google", google_host)):
-                ping_result = ping_check.run_ping(
-                    host,
-                    count=PING_COUNT,
-                    timeout=PING_TIMEOUT,
-                )
+                ping_result = ping_check.run_ping(host, count=PING_COUNT, timeout=PING_TIMEOUT)
 
-                row = {key: None for key in CSV_HEADERS}
+                row = {k: None for k in CSV_HEADERS}
                 row["timestamp"] = timestamp
                 row["mode"] = MODE_NAME
                 row["round_id"] = round_id
@@ -165,7 +105,6 @@ def main():
 
                 writer.writerow(row)
 
-                # update simple stats for summary
                 latency = ping_result.get("latency_avg_ms")
                 jitter = ping_result.get("jitter_ms")
                 loss = ping_result.get("packet_loss_pct")
@@ -182,10 +121,9 @@ def main():
 
             time.sleep(INTERVAL_SECONDS)
 
-    # tiny summary / quick interpretation
-    def avg(stat_dict, key_sum, key_count):
-        if stat_dict[key_count] > 0:
-            return stat_dict[key_sum] / stat_dict[key_count]
+    def avg(s, key_sum, key_count):
+        if s[key_count] > 0:
+            return s[key_sum] / s[key_count]
         return None
 
     gw_lat = avg(stats["gateway"], "latency_sum", "latency_count")
@@ -197,33 +135,24 @@ def main():
     gg_loss = avg(stats["google"], "loss_sum", "loss_count")
 
     print("\nwifi_diag summary (approx):")
-    print(
-        f"  gateway: latency={gw_lat:.1f} ms, jitter={gw_jit:.1f} ms, "
-        f"loss={gw_loss:.1f}%"
-        if gw_lat is not None and gw_jit is not None and gw_loss is not None
-        else "  gateway: not enough data"
-    )
-    print(
-        f"  google:  latency={gg_lat:.1f} ms, jitter={gg_jit:.1f} ms, "
-        f"loss={gg_loss:.1f}%"
-        if gg_lat is not None and gg_jit is not None and gg_loss is not None
-        else "  google:  not enough data"
-    )
+    if gw_lat is not None and gw_jit is not None and gw_loss is not None:
+        print(f"  gateway: latency={gw_lat:.1f} ms, jitter={gw_jit:.1f} ms, loss={gw_loss:.1f}%")
+    else:
+        print("  gateway: not enough data")
+
+    if gg_lat is not None and gg_jit is not None and gg_loss is not None:
+        print(f"  google:  latency={gg_lat:.1f} ms, jitter={gg_jit:.1f} ms, loss={gg_loss:.1f}%")
+    else:
+        print("  google:  not enough data")
 
     wifi_suspect = False
     isp_suspect = False
 
-    # Very rough thresholds; the analysis layer can refine these later
     if gw_jit is not None and gw_loss is not None:
         if gw_jit > 20.0 or gw_loss > 5.0:
             wifi_suspect = True
 
-    if (
-        gg_jit is not None
-        and gg_loss is not None
-        and gw_jit is not None
-        and gw_loss is not None
-    ):
+    if gg_jit is not None and gg_loss is not None and gw_jit is not None and gw_loss is not None:
         if (gg_jit > 20.0 or gg_loss > 5.0) and (gw_jit < 10.0 and gw_loss < 2.0):
             isp_suspect = True
 

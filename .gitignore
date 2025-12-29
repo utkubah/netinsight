@@ -1,3 +1,19 @@
+# Python cache
 __pycache__/
+
+
+# Virtual environments
+.venv/
+venv/
+
+# Pytest cache
 .pytest_cache/
-data/
+
+# IDE / editor settings
+.vscode/
+.idea/
+
+# NetInsight data logs
+data/*.csv
+data/*.log
+data/*.json

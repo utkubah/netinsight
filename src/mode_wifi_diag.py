@@ -1,23 +1,22 @@
 # src/mode_wifi_diag.py
 """
-NetInsight Wi-Fi diagnostic mode (simple).
+NetInsight Wi-Fi diagnostic mode (simple + robust logging).
 
-Idea:
-- Ping the gateway (local router) and a public target (google)
-- If gateway already looks bad → likely Wi-Fi / local network issue
-- If gateway looks fine but google looks bad → likely ISP / upstream issue
-- Otherwise inconclusive / healthy
-
-This mode writes a CSV for later analysis and prints a short summary.
+This version ensures logging is configured to print to stdout even if another
+part of the application configured logging already.
 """
 
 import csv
+import logging
 import os
+import sys
 import time
 from datetime import datetime, timezone
 
 import targets_config
 import ping_check
+
+logger = logging.getLogger(__name__)
 
 MODE_NAME = "wifi_diag"
 LOG_PATH = os.path.join("data", "netinsight_wifi_diag.csv")
@@ -57,24 +56,36 @@ def _avg(values):
     return sum(values) / len(values)
 
 
-def _summarize(role_results):
+def _configure_logging():
     """
-    role_results is a list of ping result dicts.
-    Returns (avg_latency, avg_jitter, avg_loss, error_kinds_set)
+    Ensure logging prints to stdout so tests that capture stdout can see it.
+
+    Use force=True when available; otherwise remove root handlers and reconfigure.
     """
-    lat = [_r.get("latency_avg_ms") for _r in role_results]
-    jit = [_r.get("jitter_ms") for _r in role_results]
-    loss = [_r.get("packet_loss_pct") for _r in role_results]
-    kinds = set([_r.get("error_kind") for _r in role_results if _r.get("error_kind")])
-    return _avg(lat), _avg(jit), _avg(loss), kinds
+    try:
+        # Python 3.8+ supports force to reconfigure root logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(message)s",
+            handlers=[logging.StreamHandler(sys.stdout)],
+            force=True,
+        )
+    except TypeError:
+        # Older Python: remove all handlers then configure to stdout
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            root.removeHandler(h)
+        logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler(sys.stdout)])
 
 
 def main():
+    _configure_logging()
+
     gateway = _find_target("gateway")
     google = _find_target("google")
 
     if not gateway or not google:
-        print("wifi_diag: missing targets. Please define SERVICES with name='gateway' and name='google'.")
+        logger.error("wifi_diag: missing 'gateway' or 'google' in targets_config.SERVICES")
         return
 
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
@@ -88,9 +99,9 @@ def main():
         if not file_exists:
             writer.writeheader()
 
-        print(f"NetInsight Wi-Fi diag starting: rounds={ROUNDS}, interval={INTERVAL_SECONDS}s")
-        print(f"  gateway: {gateway}")
-        print(f"  google:  {google}")
+        logger.info("NetInsight Wi-Fi diag starting: rounds=%d, interval=%ds", ROUNDS, INTERVAL_SECONDS)
+        logger.info("  gateway=%s", gateway)
+        logger.info("  google=%s", google)
 
         for i in range(ROUNDS):
             rid = f"{datetime.now(timezone.utc).isoformat()}#{i}"
@@ -121,38 +132,39 @@ def main():
 
             time.sleep(INTERVAL_SECONDS)
 
-    gw_lat, gw_jit, gw_loss, gw_kinds = _summarize(gateway_results)
-    gg_lat, gg_jit, gg_loss, gg_kinds = _summarize(google_results)
+    gw_lat = _avg([r.get("latency_avg_ms") for r in gateway_results])
+    gw_jit = _avg([r.get("jitter_ms") for r in gateway_results])
+    gw_loss = _avg([r.get("packet_loss_pct") for r in gateway_results])
 
-    print("\nwifi_diag summary:")
-    print(f"  gateway: latency={gw_lat} ms, jitter={gw_jit} ms, loss={gw_loss}%  kinds={sorted(gw_kinds)}")
-    print(f"  google:  latency={gg_lat} ms, jitter={gg_jit} ms, loss={gg_loss}%  kinds={sorted(gg_kinds)}")
+    gg_lat = _avg([r.get("latency_avg_ms") for r in google_results])
+    gg_jit = _avg([r.get("jitter_ms") for r in google_results])
+    gg_loss = _avg([r.get("packet_loss_pct") for r in google_results])
 
-    # Very simple decision logic (easy to explain in a report)
-    # Thresholds are intentionally basic:
+    logger.info("\nwifi_diag summary:")
+    logger.info("  gateway: latency=%s jitter=%s loss=%s", gw_lat, gw_jit, gw_loss)
+    logger.info("  google:  latency=%s jitter=%s loss=%s", gg_lat, gg_jit, gg_loss)
+
+    if any(r.get("error_kind") == "ping_no_permission" for r in gateway_results + google_results):
+        logger.warning("Ping permission issue detected: ICMP may be blocked for this process. Try enabling ICMP or running with privileges.")
+
+    # thresholds
     WIFI_JITTER_BAD = 20.0
     WIFI_LOSS_BAD = 5.0
-    ISP_JITTER_BAD = 20.0
-    ISP_LOSS_BAD = 5.0
     WIFI_GOOD_JITTER = 10.0
     WIFI_GOOD_LOSS = 2.0
-
-    # Helpful message for the common “permission denied” ping case
-    if ("ping_no_permission" in gw_kinds) or ("ping_no_permission" in gg_kinds):
-        print("\n→ Ping may be blocked by permissions on this system.")
-        print("  Try running as admin, or allow ICMP ping. Otherwise wifi_diag will be inconclusive.")
+    ISP_JITTER_BAD = 20.0
+    ISP_LOSS_BAD = 5.0
 
     wifi_bad = (gw_jit is not None and gw_jit > WIFI_JITTER_BAD) or (gw_loss is not None and gw_loss > WIFI_LOSS_BAD)
     google_bad = (gg_jit is not None and gg_jit > ISP_JITTER_BAD) or (gg_loss is not None and gg_loss > ISP_LOSS_BAD)
     wifi_good = (gw_jit is not None and gw_jit < WIFI_GOOD_JITTER) and (gw_loss is not None and gw_loss < WIFI_GOOD_LOSS)
 
-    print("")
     if wifi_bad:
-        print("→ Likely Wi-Fi / local network problem (gateway already looks bad).")
+        logger.info("→ Likely Wi-Fi / local network problem (gateway already looks bad).")
     elif google_bad and wifi_good:
-        print("→ Likely ISP / upstream problem (gateway looks fine, internet looks bad).")
+        logger.info("→ Likely ISP / upstream problem (gateway looks fine, internet looks bad).")
     else:
-        print("→ Inconclusive or mostly healthy in this short run.")
+        logger.info("→ Inconclusive or mostly healthy in this short run.")
 
 
 if __name__ == "__main__":

@@ -2,9 +2,13 @@
 """
 HTTP probe for NetInsight.
 """
+
 import time
+import logging
 import requests
 from requests import exceptions as req_exc
+
+logger = logging.getLogger(__name__)
 
 from error_kinds import (
     HTTP_OK,
@@ -35,7 +39,7 @@ def run_http(url, timeout=3.0):
         resp = requests.get(url, timeout=timeout)
         http_ms = (time.monotonic() - start) * 1000.0
         status_code = resp.status_code
-        bytes_downloaded = len(resp.content)
+        bytes_downloaded = len(resp.content) if resp.content is not None else None
         redirects = len(resp.history) if hasattr(resp, "history") else None
 
         if 200 <= status_code < 300:

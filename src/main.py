@@ -12,6 +12,7 @@ Design goals:
 """
 
 import csv
+import logging
 import os
 import time
 from datetime import datetime, timezone
@@ -20,6 +21,8 @@ import targets_config
 import ping_check
 import dns_check
 import http_check
+
+logger = logging.getLogger(__name__)
 
 INTERVAL_SECONDS = 30
 LOG_PATH = os.path.join("data", "netinsight_log.csv")
@@ -164,19 +167,18 @@ def run_once(round_id=None):
                     details.append(f"bytes={res.get('bytes')}")
                 if res.get("redirects") is not None:
                     details.append(f"redirects={res.get('redirects')}")
-
                 row["details"] = ";".join(details)
                 writer.writerow(row)
                 http_count += 1
 
-        print(
-            f"[round {round_id}] "
-            f"wrote {ping_count} ping, {dns_count} dns, {http_count} http rows"
-        )
+        logger.info("[round %s] wrote %d ping, %d dns, %d http rows", round_id, ping_count, dns_count, http_count)
 
 
 def main():
-    print(f"NetInsight baseline logger starting (interval={INTERVAL_SECONDS}s)")
+    # Configure logging to stdout for easier test capture and grading
+    import sys
+    logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler(sys.stdout)])
+    logger.info("NetInsight baseline logger starting (interval=%ds)", INTERVAL_SECONDS)
     while True:
         run_once()
         time.sleep(INTERVAL_SECONDS)

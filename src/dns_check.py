@@ -10,6 +10,9 @@ timeout cannot be enforced in that fallback on some platforms.
 import time
 import socket
 import warnings
+import logging
+
+logger = logging.getLogger(__name__)
 
 try:
     import dns.resolver
@@ -18,6 +21,7 @@ except Exception:
     HAS_DNSPY = False
 
 from error_kinds import DNS_OK, DNS_TEMP_FAILURE, DNS_NXDOMAIN, DNS_TIMEOUT, DNS_OTHER
+
 
 def run_dns(hostname, timeout=2.0):
     start = time.monotonic()
@@ -50,8 +54,14 @@ def run_dns(hostname, timeout=2.0):
             ok = False
             error_kind = DNS_OTHER
     else:
-        # Fallback to socket.gethostbyname - note: per-call timeout may be
-        # honored by system resolver configuration but not by this function.
+        # Fallback: socket.gethostbyname (no per-call timeout control).
+        # Emit a runtime warning so maintainers know the fallback caveat.
+        warnings.warn(
+            "dnspython not installed: run_dns() is using socket.gethostbyname() fallback "
+            "which may ignore per-call timeouts on some platforms.",
+            RuntimeWarning,
+        )
+        logger.debug("dnspython not available, using socket.gethostbyname fallback for DNS")
         try:
             ip = socket.gethostbyname(hostname)
             ok = True
@@ -70,13 +80,6 @@ def run_dns(hostname, timeout=2.0):
             error = str(e)
             ok = False
             error_kind = DNS_OTHER
-
-        # Warn when dnspython is not present so maintainers realize fallback caveat.
-        warnings.warn(
-            "dnspython not installed: run_dns() used socket.gethostbyname() fallback "
-            "which may ignore per-call timeouts on some platforms.",
-            RuntimeWarning,
-        )
 
     dns_ms = (time.monotonic() - start) * 1000.0
     return {

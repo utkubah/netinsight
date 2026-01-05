@@ -1,6 +1,6 @@
 # src/ping_check.py
 """
-Uses the system 'ping' command. 
+Uses the system 'ping' command.
 Returns a dict with keys:
   target, sent, received, packet_loss_pct, latencies_ms,
   latency_min_ms, latency_max_ms, latency_avg_ms, latency_p95_ms,
@@ -19,10 +19,20 @@ from .error_kinds import (
     PING_PERMISSION_DENIED,
     PING_EXCEPTION,
     PING_FAILED,
+    PING_UNKNOWN_HOST,
 )
 
 # simple regex to parse time=12.3 ms or time<1ms
 _TIME_RE = re.compile(r"time[=<]\s*([0-9]+(?:\.[0-9]+)?)\s*ms", re.IGNORECASE)
+
+_UNKNOWN_HOST_PATTERNS = (
+    "unknown host",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "could not find host",
+    "cannot resolve",
+    "nodename nor servname provided",
+)
 
 
 def run_ping(target, count=3, timeout=1.0):
@@ -47,6 +57,8 @@ def run_ping(target, count=3, timeout=1.0):
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=cmd_timeout)
         out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        low = out.lower()
+
         # extract all time=xxx ms patterns
         matches = _TIME_RE.findall(out)
         for m in matches:
@@ -56,10 +68,14 @@ def run_ping(target, count=3, timeout=1.0):
                 pass
 
         # detect permission issues (common strings)
-        low = out.lower()
         if "permission denied" in low or "operation not permitted" in low:
             error_kind = PING_PERMISSION_DENIED
             error = "ICMP permission denied for this process."
+
+        # detect unknown host / resolution errors
+        if any(p in low for p in _UNKNOWN_HOST_PATTERNS):
+            error_kind = PING_UNKNOWN_HOST
+            error = "Ping failed: unknown host / name resolution error."
 
         received = len(latencies)
 
@@ -72,6 +88,7 @@ def run_ping(target, count=3, timeout=1.0):
             else:
                 error_kind = PING_NO_REPLY
                 error = "No ping replies received."
+
     except FileNotFoundError:
         error_kind = PING_TOOL_MISSING
         error = "System 'ping' command not found."

@@ -1,3 +1,4 @@
+# src/csv_log.py
 import csv
 import os
 from datetime import datetime, timezone
@@ -21,6 +22,27 @@ CSV_HEADERS = [
     "error_message",
     "details",  # JSON string (always JSON for consistency)
 ]
+
+
+CSV_SCHEMA_DOC = {
+    "timestamp": "ISO8601 UTC timestamp for the row",
+    "mode": "Mode name (e.g., baseline, wifi_diag, service_health)",
+    "round_id": "Round identifier (ISO timestamp used for grouping rows)",
+    "service_name": "Logical service name from targets_config (e.g., google)",
+    "hostname": "Hostname used for ping/dns probes (empty if missing)",
+    "url": "HTTP URL used for HTTP probes (empty if none)",
+    "tags": "Comma-separated tags (e.g., baseline, public_web)",
+    "probe_type": "One of 'ping', 'dns', 'http', or other probe types",
+    "success": "String 'True' or 'False' (empty if not applicable)",
+    "latency_ms": "Primary latency metric (avg) in milliseconds for probe",
+    "latency_p95_ms": "95th percentile latency in milliseconds (ping)",
+    "jitter_ms": "Jitter (mean absolute difference between samples) in ms (ping)",
+    "packet_loss_pct": "Percent packet loss for ping",
+    "status_code": "HTTP status code (for http probe) or empty",
+    "error_kind": "Canonical error kind string (e.g., http_timeout, dns_gaierror)",
+    "error_message": "Human-oriented error message where available",
+    "details": "JSON string with probe-specific details (bytes, redirects, latencies, etc.)",
+}
 
 
 def utc_now_iso():
@@ -73,10 +95,6 @@ def append_rows(csv_path, rows):
     If csv exists, the code checks the existing header matches CSV_HEADERS.
     If headers differ, a ValueError is raised with instructions to rotate/rename
     the existing file to avoid mixing incompatible schemas.
-
-    Note: we intentionally do NOT implement file locking here (single-writer
-    assumption for grading simplicity). If you expect concurrent writers, add
-    an advisory lock or use a robust external store.
     """
     if not rows:
         return
@@ -85,7 +103,6 @@ def append_rows(csv_path, rows):
     if parent:
         os.makedirs(parent, exist_ok=True)
 
-    file_exists = os.path.exists(csv_path)
     # open in a+ so we can read existing header and then append
     with open(csv_path, "a+", newline="", encoding="utf-8") as f:
         f.seek(0)
@@ -102,8 +119,8 @@ def append_rows(csv_path, rows):
                     f"Existing header: {existing_headers}\n"
                     f"Expected header: {CSV_HEADERS}\n\n"
                     "To avoid mixing incompatible schemas, please rotate or rename the "
-                    "existing file (e.g., add a timestamp suffix). Aborting append to "
-                    "prevent corrupted/mismatched CSV.\n"
+                    "existing file (e.g., add a timestamp suffix) or run with --rotate. "
+                    "Aborting append to prevent corrupted/mismatched CSV.\n"
                 )
 
         f.seek(0, os.SEEK_END)

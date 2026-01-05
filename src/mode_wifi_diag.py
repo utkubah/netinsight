@@ -2,7 +2,7 @@
 """
 Wi-Fi diagnostic: compare gateway vs external host.
 """
-
+import json
 import logging
 import os
 import time
@@ -12,6 +12,7 @@ from .logging_setup import setup_logging
 from . import ping_check
 from . import net_utils
 from . import targets_config
+from .error_kinds import CONFIG_MISSING_GATEWAY
 
 LOG = logging.getLogger("netinsight.wifi_diag")
 LOG_PATH = os.path.join("data", "netinsight_wifi_diag.csv")
@@ -22,7 +23,7 @@ def run_wifi_diag(rounds=10, interval=1.0, gateway_host=None, external_host=None
         log_path = LOG_PATH
 
     if external_host is None:
-        external_host = "www.google.com"
+        external_host = targets_config.WIFI_DIAG_EXTERNAL_HOST
 
     if gateway_host is None:
         gateway_host = net_utils.get_default_gateway_ip()
@@ -40,20 +41,26 @@ def run_wifi_diag(rounds=10, interval=1.0, gateway_host=None, external_host=None
     for i in range(rounds):
         # gateway
         if gateway_host:
-            rgw = ping_check.run_ping(gateway_host, count=1, timeout=1.0)
+            try:
+                rgw = ping_check.run_ping(gateway_host, count=1, timeout=1.0)
+            except Exception as e:
+                rgw = {"received": 0, "latency_avg_ms": None, "error_kind": "ping_exception", "error": str(e)}
             gw_lats.append(rgw.get("latency_avg_ms"))
             if rgw.get("received", 0) > 0:
                 gw_ok += 1
-            rows.append(make_row(mode="wifi_diag", round_id=round_id, service_name="gateway", hostname=gateway_host, probe_type="ping", success=(rgw.get("received", 0) > 0), latency_ms=rgw.get("latency_avg_ms"), error_kind=rgw.get("error_kind"), details=str({"round": i + 1})))
+            rows.append(make_row(mode="wifi_diag", round_id=round_id, service_name="gateway", hostname=gateway_host, probe_type="ping", success=(rgw.get("received", 0) > 0), latency_ms=rgw.get("latency_avg_ms"), error_kind=rgw.get("error_kind"), error_message=rgw.get("error") or "", details=json.dumps({"round": i + 1}, separators=(",", ":"))))
         else:
-            rows.append(make_row(mode="wifi_diag", round_id=round_id, service_name="gateway", hostname="", probe_type="ping", success=False, error_kind="config_missing_gateway", error_message="gateway not detected", details=str({"round": i + 1})))
+            rows.append(make_row(mode="wifi_diag", round_id=round_id, service_name="gateway", hostname="", probe_type="ping", success=False, error_kind=CONFIG_MISSING_GATEWAY, error_message="gateway not detected", details=json.dumps({"round": i + 1}, separators=(",", ":"))))
 
         # external
-        rex = ping_check.run_ping(external_host, count=1, timeout=1.5)
+        try:
+            rex = ping_check.run_ping(external_host, count=1, timeout=1.5)
+        except Exception as e:
+            rex = {"received": 0, "latency_avg_ms": None, "error_kind": "ping_exception", "error": str(e)}
         ex_lats.append(rex.get("latency_avg_ms"))
         if rex.get("received", 0) > 0:
             ex_ok += 1
-        rows.append(make_row(mode="wifi_diag", round_id=round_id, service_name="external", hostname=external_host, probe_type="ping", success=(rex.get("received", 0) > 0), latency_ms=rex.get("latency_avg_ms"), error_kind=rex.get("error_kind"), details=str({"round": i + 1})))
+        rows.append(make_row(mode="wifi_diag", round_id=round_id, service_name="external", hostname=external_host, probe_type="ping", success=(rex.get("received", 0) > 0), latency_ms=rex.get("latency_avg_ms"), error_kind=rex.get("error_kind"), error_message=rex.get("error") or "", details=json.dumps({"round": i + 1}, separators=(",", ":"))))
 
         if interval and interval > 0:
             time.sleep(interval)

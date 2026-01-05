@@ -3,6 +3,11 @@
 Canonical error kind constants for NetInsight.
 """
 
+# Generic/Config
+CONFIG_MISSING_GATEWAY = "config_missing_gateway"
+CONFIG_MISSING_HOSTNAME = "config_missing_hostname"
+CONFIG_MISSING_URL = "config_missing_url"
+
 # Ping
 PING_OK = "ok"
 PING_TIMEOUT = "ping_timeout"
@@ -11,6 +16,7 @@ PING_TOOL_MISSING = "ping_tool_missing"
 PING_PERMISSION_DENIED = "ping_permission_denied"
 PING_EXCEPTION = "ping_exception"
 PING_FAILED = "ping_failed"
+PING_UNKNOWN_HOST = "ping_unknown_host"
 
 # DNS
 DNS_OK = "ok"

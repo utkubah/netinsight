@@ -3,7 +3,6 @@
 Service health: ping + dns + http for a single domain.
 Provides classify_service_state() and run_service_health().
 """
-
 import json
 import logging
 import os
@@ -66,13 +65,24 @@ def run_service_health(domain, log_path=None):
     round_id = utc_now_iso()
     url = f"https://{domain}"
 
-    ping_r = ping_check.run_ping(domain, count=2, timeout=1.5)
-    dns_r = dns_check.run_dns(domain, timeout=2.5)
-    http_r = http_check.run_http(url, timeout=5.0)
+    try:
+        ping_r = ping_check.run_ping(domain, count=2, timeout=1.5)
+    except Exception as e:
+        ping_r = {"received": 0, "error_kind": "ping_exception", "error": str(e)}
+
+    try:
+        dns_r = dns_check.run_dns(domain, timeout=2.5)
+    except Exception as e:
+        dns_r = {"ok": False, "ip": None, "error_kind": "dns_exception", "error": str(e)}
+
+    try:
+        http_r = http_check.run_http(url, timeout=5.0)
+    except Exception as e:
+        http_r = {"ok": False, "error_kind": "http_exception", "error": str(e)}
 
     state = classify_service_state(ping_r, dns_r, http_r)
 
-    details = json.dumps({"ping": ping_r, "dns": dns_r, "http": http_r, "state": state}, separators=(",", ":"))
+    details = json.dumps({"ping": ping_r, "dns": dns_r, "http": http_r, "state": state}, separators=(",", ":"), sort_keys=True)
 
     row = make_row(
         mode="service_health",

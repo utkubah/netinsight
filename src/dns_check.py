@@ -1,11 +1,11 @@
 # src/dns_check.py
 """
 Simple DNS probe using socket.gethostbyname and a short timeout.
-
 """
-
 import socket
 import time
+
+from .error_kinds import DNS_OK, DNS_GAIERROR, DNS_TIMEOUT, DNS_EXCEPTION
 
 
 def run_dns(hostname, timeout=2.0):
@@ -13,7 +13,7 @@ def run_dns(hostname, timeout=2.0):
     ip = None
     ok = False
     error = None
-    error_kind = "ok"
+    error_kind = DNS_OK
 
     # socket.gethostbyname doesn't accept a timeout param directly on all platforms.
     # We use setdefaulttimeout briefly to approximate a per-call timeout.
@@ -24,13 +24,13 @@ def run_dns(hostname, timeout=2.0):
         ok = True
     except socket.gaierror as e:
         error = str(e)
-        error_kind = "dns_gaierror"
+        error_kind = DNS_GAIERROR
     except socket.timeout:
         error = "DNS timeout"
-        error_kind = "dns_timeout"
+        error_kind = DNS_TIMEOUT
     except Exception as e:
         error = str(e)
-        error_kind = "dns_exception"
+        error_kind = DNS_EXCEPTION
     finally:
         socket.setdefaulttimeout(old)
 

@@ -2,7 +2,6 @@ import csv
 import os
 from datetime import datetime, timezone
 
-
 CSV_HEADERS = [
     "timestamp",
     "mode",
@@ -68,6 +67,17 @@ def make_row(
 
 
 def append_rows(csv_path, rows):
+    """
+    Append rows to csv_path using CSV_HEADERS as the canonical schema.
+
+    If csv exists, the code checks the existing header matches CSV_HEADERS.
+    If headers differ, a ValueError is raised with instructions to rotate/rename
+    the existing file to avoid mixing incompatible schemas.
+
+    Note: we intentionally do NOT implement file locking here (single-writer
+    assumption for grading simplicity). If you expect concurrent writers, add
+    an advisory lock or use a robust external store.
+    """
     if not rows:
         return
 
@@ -76,9 +86,29 @@ def append_rows(csv_path, rows):
         os.makedirs(parent, exist_ok=True)
 
     file_exists = os.path.exists(csv_path)
-    with open(csv_path, "a", newline="", encoding="utf-8") as f:
+    # open in a+ so we can read existing header and then append
+    with open(csv_path, "a+", newline="", encoding="utf-8") as f:
+        f.seek(0)
+        reader = csv.reader(f)
+        try:
+            existing_headers = next(reader)
+        except StopIteration:
+            existing_headers = None
+
+        if existing_headers:
+            if existing_headers != CSV_HEADERS:
+                raise ValueError(
+                    f"CSV header mismatch for {csv_path}.\n"
+                    f"Existing header: {existing_headers}\n"
+                    f"Expected header: {CSV_HEADERS}\n\n"
+                    "To avoid mixing incompatible schemas, please rotate or rename the "
+                    "existing file (e.g., add a timestamp suffix). Aborting append to "
+                    "prevent corrupted/mismatched CSV.\n"
+                )
+
+        f.seek(0, os.SEEK_END)
         writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-        if not file_exists:
+        if not existing_headers:
             writer.writeheader()
         for r in rows:
             writer.writerow(r)

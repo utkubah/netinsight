@@ -6,11 +6,20 @@ Returns a dict with keys:
   latency_min_ms, latency_max_ms, latency_avg_ms, latency_p95_ms,
   jitter_ms, elapsed_ms, error_kind, error
 """
-
 import platform
 import re
 import subprocess
 import time
+
+from .error_kinds import (
+    PING_OK,
+    PING_TIMEOUT,
+    PING_NO_REPLY,
+    PING_TOOL_MISSING,
+    PING_PERMISSION_DENIED,
+    PING_EXCEPTION,
+    PING_FAILED,
+)
 
 # simple regex to parse time=12.3 ms or time<1ms
 _TIME_RE = re.compile(r"time[=<]\s*([0-9]+(?:\.[0-9]+)?)\s*ms", re.IGNORECASE)
@@ -20,7 +29,7 @@ def run_ping(target, count=3, timeout=1.0):
     sent = int(count)
     latencies = []
     error = None
-    error_kind = "ok"
+    error_kind = PING_OK
 
     system = platform.system().lower()
 
@@ -49,31 +58,30 @@ def run_ping(target, count=3, timeout=1.0):
         # detect permission issues (common strings)
         low = out.lower()
         if "permission denied" in low or "operation not permitted" in low:
-            error_kind = "ping_permission_denied"
+            error_kind = PING_PERMISSION_DENIED
             error = "ICMP permission denied for this process."
 
         received = len(latencies)
 
-        if received == 0 and error_kind == "ok":
+        if received == 0 and error_kind == PING_OK:
             # no replies seen
             if proc.returncode != 0:
                 # if returncode non-zero but some output exists, mark failed
-                error_kind = "ping_failed"
+                error_kind = PING_FAILED
                 error = (proc.stderr or proc.stdout or f"ping exited {proc.returncode}").strip()
             else:
-                error_kind = "ping_no_reply"
+                error_kind = PING_NO_REPLY
                 error = "No ping replies received."
-
     except FileNotFoundError:
-        error_kind = "ping_tool_missing"
+        error_kind = PING_TOOL_MISSING
         error = "System 'ping' command not found."
         received = 0
     except subprocess.TimeoutExpired:
-        error_kind = "ping_timeout"
+        error_kind = PING_TIMEOUT
         error = "Ping command timed out."
         received = 0
     except Exception as e:
-        error_kind = "ping_exception"
+        error_kind = PING_EXCEPTION
         error = str(e)
         received = 0
 

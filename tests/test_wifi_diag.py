@@ -1,86 +1,46 @@
-"""
-wifi_diag tests.
-
-These tests simulate two real-world situations:
-
-1) Wi-Fi problem:
-   gateway is bad (high loss/jitter), but google is fine
-   → should conclude Wi-Fi/local network problem
-
-2) ISP problem:
-   gateway is fine, but google is bad
-   → should conclude ISP/upstream problem
-"""
-
-import mode_wifi_diag
-import targets_config
-import ping_check
+# tests/test_wifi_diag.py
+from src import mode_wifi_diag
 
 
-def _ping_ok():
-    return {
-        "received": 3,
-        "latency_avg_ms": 20.0,
-        "latency_p95_ms": 40.0,
-        "jitter_ms": 5.0,
-        "packet_loss_pct": 0.0,
-        "error_kind": "ok",
-        "error": None,
-    }
+def test_wifi_problem(monkeypatch, tmp_path):
+    """
+    Gateway latency much higher than external -> Likely Wi-Fi/local problem.
+    """
+    def fake_ping(target, count=1, timeout=1.0):
+        if target == "gw":
+            return {"received": 1, "latency_avg_ms": 150.0, "latency_p95_ms": 150.0, "jitter_ms": 20.0, "packet_loss_pct": 0.0, "error_kind": "ok", "error": None}
+        return {"received": 1, "latency_avg_ms": 20.0, "latency_p95_ms": 20.0, "jitter_ms": 2.0, "packet_loss_pct": 0.0, "error_kind": "ok", "error": None}
+
+    monkeypatch.setattr(mode_wifi_diag.ping_check, "run_ping", fake_ping)
+
+    diag = mode_wifi_diag.run_wifi_diag(
+        rounds=5,
+        interval=0,
+        gateway_host="gw",
+        external_host="ext",
+        log_path=str(tmp_path / "wifi.csv"),
+    )
+
+    assert "Wi-Fi" in diag or "local network" in diag
 
 
-def _ping_bad():
-    return {
-        "received": 0,
-        "latency_avg_ms": None,
-        "latency_p95_ms": None,
-        "jitter_ms": 50.0,
-        "packet_loss_pct": 100.0,
-        "error_kind": "ping_timeout",
-        "error": "timeout",
-    }
+def test_isp_problem(monkeypatch, tmp_path):
+    """
+    Gateway OK, external failing -> Likely ISP / upstream problem.
+    """
+    def fake_ping(target, count=1, timeout=1.0):
+        if target == "gw":
+            return {"received": 1, "latency_avg_ms": 10.0, "latency_p95_ms": 10.0, "jitter_ms": 1.0, "packet_loss_pct": 0.0, "error_kind": "ok", "error": None}
+        return {"received": 0, "latency_avg_ms": None, "latency_p95_ms": None, "jitter_ms": None, "packet_loss_pct": 100.0, "error_kind": "ping_timeout", "error": "timeout"}
 
+    monkeypatch.setattr(mode_wifi_diag.ping_check, "run_ping", fake_ping)
 
-def test_wifi_problem(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(mode_wifi_diag, "ROUNDS", 2)
-    monkeypatch.setattr(mode_wifi_diag, "INTERVAL_SECONDS", 0.01)
-    monkeypatch.setattr(mode_wifi_diag, "LOG_PATH", str(tmp_path / "wifi.csv"))
+    diag = mode_wifi_diag.run_wifi_diag(
+        rounds=5,
+        interval=0,
+        gateway_host="gw",
+        external_host="ext",
+        log_path=str(tmp_path / "wifi.csv"),
+    )
 
-    # Make config deterministic for the test
-    monkeypatch.setattr(targets_config, "SERVICES", [
-        {"name": "gateway", "hostname": "GW"},
-        {"name": "google", "hostname": "GG"},
-    ])
-
-    def fake_ping(target, count, timeout):
-        if target == "GW":
-            return _ping_bad()
-        return _ping_ok()
-
-    monkeypatch.setattr(ping_check, "run_ping", fake_ping)
-
-    mode_wifi_diag.main()
-    out = capsys.readouterr().out
-    assert "Likely Wi-Fi / local network problem" in out
-
-
-def test_isp_problem(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(mode_wifi_diag, "ROUNDS", 2)
-    monkeypatch.setattr(mode_wifi_diag, "INTERVAL_SECONDS", 0.01)
-    monkeypatch.setattr(mode_wifi_diag, "LOG_PATH", str(tmp_path / "wifi.csv"))
-
-    monkeypatch.setattr(targets_config, "SERVICES", [
-        {"name": "gateway", "hostname": "GW"},
-        {"name": "google", "hostname": "GG"},
-    ])
-
-    def fake_ping(target, count, timeout):
-        if target == "GG":
-            return _ping_bad()
-        return _ping_ok()
-
-    monkeypatch.setattr(ping_check, "run_ping", fake_ping)
-
-    mode_wifi_diag.main()
-    out = capsys.readouterr().out
-    assert "Likely ISP / upstream problem" in out
+    assert "ISP" in diag or "upstream" in diag

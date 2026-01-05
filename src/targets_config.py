@@ -1,25 +1,28 @@
-# src/targets_config.py
 """
 Service/target configuration for NetInsight.
 
-Keep it simple:
- - SERVICES is a list of dicts. Each dict can have:
-   - name, hostname, url, tags
-   - ping: {enabled, count, timeout}
-   - dns:  {enabled, timeout}
-   - http: {enabled, timeout}
+We keep it simple: just data.
+
+Gateway is NOT hardcoded anymore:
+- Set GATEWAY_HOSTNAME to None and we auto-detect it at runtime
+- Or set env var NETINSIGHT_GATEWAY_IP="192.168.1.1"
 """
 
+GATEWAY_HOSTNAME = None
+
+WIFI_DIAG_EXTERNAL_HOST = "www.google.com"
+WIFI_DIAG_EXTERNAL_URL = "https://www.google.com/generate_204"
+
 SERVICES = [
-    # Local / infrastructure / baseline
+    # Local / baseline
     {
         "name": "gateway",
-        "hostname": "127.0.1.1", #make this changable
-        "url": "http://127.0.1.1/",
+        "hostname": GATEWAY_HOSTNAME,
+        "url": "",
         "tags": ["gateway", "wifi_path", "baseline"],
         "ping": {"enabled": True, "count": 5, "timeout": 1.0},
         "dns": {"enabled": False, "timeout": 1.0},
-        "http": {"enabled": True, "timeout": 2.0},
+        "http": {"enabled": False, "timeout": 2.0},
     },
     {
         "name": "google",
@@ -70,6 +73,15 @@ SERVICES = [
         "dns": {"enabled": True, "timeout": 2.0},
         "http": {"enabled": True, "timeout": 4.0},
     },
+    {
+        "name": "meet",
+        "hostname": "meet.google.com",
+        "url": "https://meet.google.com/",
+        "tags": ["video_call"],
+        "ping": {"enabled": True, "count": 3, "timeout": 1.5},
+        "dns": {"enabled": True, "timeout": 2.0},
+        "http": {"enabled": True, "timeout": 4.0},
+    },
 
     # Streaming / media
     {
@@ -77,6 +89,15 @@ SERVICES = [
         "hostname": "www.youtube.com",
         "url": "https://www.youtube.com/",
         "tags": ["streaming", "video"],
+        "ping": {"enabled": True, "count": 3, "timeout": 1.5},
+        "dns": {"enabled": True, "timeout": 2.0},
+        "http": {"enabled": True, "timeout": 4.0},
+    },
+    {
+        "name": "spotify",
+        "hostname": "open.spotify.com",
+        "url": "https://open.spotify.com/",
+        "tags": ["streaming", "audio"],
         "ping": {"enabled": True, "count": 3, "timeout": 1.5},
         "dns": {"enabled": True, "timeout": 2.0},
         "http": {"enabled": True, "timeout": 4.0},
@@ -93,7 +114,7 @@ SERVICES = [
         "http": {"enabled": True, "timeout": 4.0},
     },
 
-    # Social / firewall candidates
+    # Firewall-ish / region-sensitive examples
     {
         "name": "discord",
         "hostname": "discord.com",

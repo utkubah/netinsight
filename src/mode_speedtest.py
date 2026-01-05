@@ -1,60 +1,45 @@
 # src/mode_speedtest.py
-"""Minimal Speedtest wrapper with robust logging and error handling."""
+"""
+Small wrapper around speedtest-cli. If the module is missing, logs a helpful message.
+"""
 
 import logging
-import sys
+from .logging_setup import setup_logging
 
-logger = logging.getLogger(__name__)
-
-
-def _configure_logging():
-    try:
-        # Python 3.8+ supports force to reconfigure logging
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(message)s",
-            handlers=[logging.StreamHandler(sys.stdout)],
-            force=True,
-        )
-    except TypeError:
-        # Older Python: remove handlers and configure to stdout
-        root = logging.getLogger()
-        for h in list(root.handlers):
-            root.removeHandler(h)
-        logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler(sys.stdout)])
+LOG = logging.getLogger("netinsight.speedtest")
 
 
-def main():
-    _configure_logging()
+def run_speedtest():
     try:
         import speedtest
     except Exception as e:
-        logger.error("speedtest module not available: %s", e)
-        return
+        LOG.error("speedtest not available: %s", e)
+        return None
 
     try:
         st = speedtest.Speedtest()
-        st.get_servers()
         st.get_best_server()
-        download_bps = st.download()
-        upload_bps = st.upload()
-        results = st.results.dict()
+        dl = st.download()
+        ul = st.upload()
+        res = st.results.dict()
+        server = res.get("server") or {}
+        ping = res.get("ping")
+        result = {
+            "download_mbps": dl / 1_000_000.0,
+            "upload_mbps": ul / 1_000_000.0,
+            "ping_ms": ping,
+            "server": server,
+        }
+        LOG.info("speedtest: %s", result)
+        return result
     except Exception as e:
-        logger.exception("Speedtest failed: %s", e)
-        return
+        LOG.error("speedtest failed: %s", e)
+        return None
 
-    server = results.get("server") or {}
-    server_name = server.get("name")
-    server_sponsor = server.get("sponsor")
-    ping_ms = results.get("ping")
 
-    download_mbps = download_bps / 1_000_000.0 if download_bps else 0.0
-    upload_mbps = upload_bps / 1_000_000.0 if upload_bps else 0.0
-
-    logger.info("Speedtest server: %s (%s)", server_name, server_sponsor)
-    logger.info("Ping:     %.1f ms", ping_ms if ping_ms is not None else 0.0)
-    logger.info("Download: %.2f Mbps", download_mbps)
-    logger.info("Upload:   %.2f Mbps", upload_mbps)
+def main():
+    setup_logging()
+    run_speedtest()
 
 
 if __name__ == "__main__":

@@ -1,35 +1,28 @@
 # src/error_kinds.py
 """
-Canonical error_kind constants used across the project.
-
-Purpose: Avoid brittle string literals scattered in the code and make
-classifications consistent.
+Canonical error kind constants for NetInsight.
 """
 
-# Ping error kinds
+# Ping
 PING_OK = "ok"
 PING_TIMEOUT = "ping_timeout"
-PING_DNS_FAILURE = "ping_dns_failure"
+PING_NO_REPLY = "ping_no_reply"
 PING_TOOL_MISSING = "ping_tool_missing"
-PING_NO_PERMISSION = "ping_no_permission"
-PING_UNREACHABLE = "ping_unreachable"
-PING_UNKNOWN_ERROR = "ping_unknown_error"
+PING_PERMISSION_DENIED = "ping_permission_denied"
+PING_EXCEPTION = "ping_exception"
+PING_FAILED = "ping_failed"
 
-# DNS error kinds
+# DNS
 DNS_OK = "ok"
-DNS_TEMP_FAILURE = "dns_temp_failure"
-DNS_NXDOMAIN = "dns_nxdomain"
+DNS_GAIERROR = "dns_gaierror"
 DNS_TIMEOUT = "dns_timeout"
-DNS_OTHER = "dns_other_error"
+DNS_EXCEPTION = "dns_exception"
 
-# HTTP error kinds
+# HTTP
 HTTP_OK = "ok"
-HTTP_4XX = "http_4xx"
-HTTP_5XX = "http_5xx"
+HTTP_NON_OK_STATUS = "http_non_ok_status"
 HTTP_TIMEOUT = "http_timeout"
 HTTP_SSL = "http_ssl_error"
-HTTP_CONN_RESET = "http_connection_reset"
-HTTP_DNS_ERROR = "http_dns_error"
 HTTP_CONN_ERROR = "http_connection_error"
-HTTP_OTHER = "http_other_error"
-HTTP_OTHER_STATUS = "http_other_status"
+HTTP_REQUEST_EXCEPTION = "http_request_exception"
+HTTP_EXCEPTION = "http_exception"

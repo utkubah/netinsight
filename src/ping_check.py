@@ -1,174 +1,115 @@
 # src/ping_check.py
 """
-Simple, robust ping probe.
-
-Design choices (minimal but reliable):
-- First attempt a DNS resolution using socket.gethostbyname(). If that fails,
-  we immediately return a DNS-specific error (no reliance on ping's stderr).
-- Then run the platform-appropriate system `ping` single-packet commands `count`
-  times and measure elapsed time for successful attempts.
-- Success is determined by `returncode == 0` (no fragile stdout text parsing).
-- If no successful samples, we decide whether it is a timeout (elapsed >= timeout
-  threshold) or a generic error. We return canonical error_kind constants.
-
-This keeps behavior deterministic across locales and avoids brittle text parsing.
+Uses the system 'ping' command. 
+Returns a dict with keys:
+  target, sent, received, packet_loss_pct, latencies_ms,
+  latency_min_ms, latency_max_ms, latency_avg_ms, latency_p95_ms,
+  jitter_ms, elapsed_ms, error_kind, error
 """
 
 import platform
+import re
 import subprocess
 import time
-import socket
 
-from error_kinds import (
-    PING_OK,
-    PING_TIMEOUT,
-    PING_DNS_FAILURE,
-    PING_TOOL_MISSING,
-    PING_UNKNOWN_ERROR,
-    PING_UNREACHABLE,
-    PING_NO_PERMISSION,
-)
-
-def _stats_from_latencies(latencies):
-    if not latencies:
-        return None, None, None, None, None
-    lat_min = min(latencies)
-    lat_max = max(latencies)
-    lat_avg = sum(latencies) / len(latencies)
-    sorted_l = sorted(latencies)
-    p95 = sorted_l[int(0.95 * (len(sorted_l) - 1))]
-    if len(latencies) >= 2:
-        diffs = [abs(latencies[i] - latencies[i - 1]) for i in range(1, len(latencies))]
-        jitter = sum(diffs) / len(diffs)
-    else:
-        jitter = None
-    return lat_min, lat_max, lat_avg, p95, jitter
+# simple regex to parse time=12.3 ms or time<1ms
+_TIME_RE = re.compile(r"time[=<]\s*([0-9]+(?:\.[0-9]+)?)\s*ms", re.IGNORECASE)
 
 
-def run_ping(target, count=5, timeout=1.0):
-    """
-    Run 'count' single-packet pings to target with per-ping timeout (seconds).
-    Returns a dict with metrics and canonical error_kind.
-    """
-    # 1) Pre-resolve hostname so we reliably detect DNS failures
-    try:
-        socket.gethostbyname(target)
-    except Exception as e:
-        return {
-            "target": target,
-            "sent": count,
-            "received": 0,
-            "latency_min_ms": None,
-            "latency_max_ms": None,
-            "latency_avg_ms": None,
-            "latency_p95_ms": None,
-            "jitter_ms": None,
-            "latencies_ms": [],
-            "packet_loss_pct": 100.0,
-            "error": str(e),
-            "error_kind": PING_DNS_FAILURE,
-        }
+def run_ping(target, count=3, timeout=1.0):
+    sent = int(count)
+    latencies = []
+    error = None
+    error_kind = "ok"
 
     system = platform.system().lower()
-    latencies = []
-    errors = []
 
-    for _ in range(count):
-        if system.startswith("windows"):
-            t_ms = max(1, int(timeout * 1000))
-            cmd = ["ping", "-n", "1", "-w", str(t_ms), target]
-        else:
-            # many Unix `ping` implementations expect integer seconds for -W
-            t_secs = max(1, int(timeout)) if timeout > 0 else 1
-            cmd = ["ping", "-c", "1", "-W", str(t_secs), target]
+    # Build a simple ping command depending on OS
+    if system.startswith("win"):
+        cmd = ["ping", "-n", str(sent), "-w", str(int(timeout * 1000)), target]
+        # allow extra time for subprocess timeout
+        cmd_timeout = sent * (timeout + 1) + 3
+    else:
+        # macOS and Linux: use -c for count; let timeout be managed per-call where possible
+        cmd = ["ping", "-c", str(sent), target]
+        cmd_timeout = sent * (timeout + 1) + 3
 
-        start = time.time()
-        try:
-            p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        except FileNotFoundError:
-            return {
-                "target": target,
-                "sent": count,
-                "received": 0,
-                "latency_min_ms": None,
-                "latency_max_ms": None,
-                "latency_avg_ms": None,
-                "latency_p95_ms": None,
-                "jitter_ms": None,
-                "latencies_ms": [],
-                "packet_loss_pct": 100.0,
-                "error": "system ping tool not found",
-                "error_kind": PING_TOOL_MISSING,
-            }
-        except PermissionError as e:
-            # rare, but indicate permission issue
-            return {
-                "target": target,
-                "sent": count,
-                "received": 0,
-                "latency_min_ms": None,
-                "latency_max_ms": None,
-                "latency_avg_ms": None,
-                "latency_p95_ms": None,
-                "jitter_ms": None,
-                "latencies_ms": [],
-                "packet_loss_pct": 100.0,
-                "error": str(e),
-                "error_kind": PING_NO_PERMISSION,
-            }
+    start = time.monotonic()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=cmd_timeout)
+        out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        # extract all time=xxx ms patterns
+        matches = _TIME_RE.findall(out)
+        for m in matches:
+            try:
+                latencies.append(float(m))
+            except Exception:
+                pass
 
-        elapsed_ms = (time.time() - start) * 1000.0
+        # detect permission issues (common strings)
+        low = out.lower()
+        if "permission denied" in low or "operation not permitted" in low:
+            error_kind = "ping_permission_denied"
+            error = "ICMP permission denied for this process."
 
-        # success if returncode == 0 (reliable across OSes)
-        if p.returncode == 0:
-            latencies.append(elapsed_ms)
-        else:
-            # store stderr/stdout for debugging but avoid parsing localized messages
-            out = (p.stdout or "").strip()
-            err = (p.stderr or "").strip()
-            errors.append(err or out or f"ping exited {p.returncode}")
+        received = len(latencies)
 
-    sent = count
+        if received == 0 and error_kind == "ok":
+            # no replies seen
+            if proc.returncode != 0:
+                # if returncode non-zero but some output exists, mark failed
+                error_kind = "ping_failed"
+                error = (proc.stderr or proc.stdout or f"ping exited {proc.returncode}").strip()
+            else:
+                error_kind = "ping_no_reply"
+                error = "No ping replies received."
+
+    except FileNotFoundError:
+        error_kind = "ping_tool_missing"
+        error = "System 'ping' command not found."
+        received = 0
+    except subprocess.TimeoutExpired:
+        error_kind = "ping_timeout"
+        error = "Ping command timed out."
+        received = 0
+    except Exception as e:
+        error_kind = "ping_exception"
+        error = str(e)
+        received = 0
+
+    elapsed_ms = (time.monotonic() - start) * 1000.0
+
+    # compute basic stats
+    if latencies:
+        lat_sorted = sorted(latencies)
+        latency_min = lat_sorted[0]
+        latency_max = lat_sorted[-1]
+        latency_avg = sum(lat_sorted) / len(lat_sorted)
+        idx = int(0.95 * (len(lat_sorted) - 1))
+        latency_p95 = lat_sorted[idx]
+        # jitter: average absolute difference of consecutive samples (original order)
+        diffs = []
+        for i in range(1, len(latencies)):
+            diffs.append(abs(latencies[i] - latencies[i - 1]))
+        jitter = (sum(diffs) / len(diffs)) if diffs else 0.0
+    else:
+        latency_min = latency_max = latency_avg = latency_p95 = jitter = None
+
     received = len(latencies)
     packet_loss_pct = 100.0 * (sent - received) / sent if sent > 0 else 100.0
-
-    if latencies:
-        mn, mx, avg, p95, jitter = _stats_from_latencies(latencies)
-        return {
-            "target": target,
-            "sent": sent,
-            "received": received,
-            "latency_min_ms": mn,
-            "latency_max_ms": mx,
-            "latency_avg_ms": avg,
-            "latency_p95_ms": p95,
-            "jitter_ms": jitter,
-            "latencies_ms": latencies,
-            "packet_loss_pct": packet_loss_pct,
-            "error": None,
-            "error_kind": PING_OK,
-        }
-
-    # no successful samples: decide on a conservative error classification
-    first_err = errors[0] if errors else "all pings failed"
-    # If elapsed time suggests timeout, prefer a timeout label
-    # (We cannot rely on parsing localized text.)
-    if abs(elapsed_ms - (timeout * 1000.0)) <= 50 or elapsed_ms >= (timeout * 1000.0):
-        ek = PING_TIMEOUT
-    else:
-        ek = PING_UNKNOWN_ERROR
 
     return {
         "target": target,
         "sent": sent,
-        "received": 0,
-        "latency_min_ms": None,
-        "latency_max_ms": None,
-        "latency_avg_ms": None,
-        "latency_p95_ms": None,
-        "jitter_ms": None,
-        "latencies_ms": [],
-        "packet_loss_pct": 100.0,
-        "error": first_err,
-        "error_kind": ek,
+        "received": received,
+        "packet_loss_pct": packet_loss_pct,
+        "latencies_ms": latencies,
+        "latency_min_ms": latency_min,
+        "latency_max_ms": latency_max,
+        "latency_avg_ms": latency_avg,
+        "latency_p95_ms": latency_p95,
+        "jitter_ms": jitter,
+        "elapsed_ms": elapsed_ms,
+        "error_kind": error_kind,
+        "error": error,
     }

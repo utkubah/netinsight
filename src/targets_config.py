@@ -1,127 +1,61 @@
+# src/targets_config.py
 """
-Service/target configuration for NetInsight.
+Thin loader that exposes configuration from config/targets.json.
 
-We keep it simple: just data.
-
-Gateway is NOT hardcoded anymore:
-- Set GATEWAY_HOSTNAME to None and we auto-detect it at runtime
-- Or set env var NETINSIGHT_GATEWAY_IP="192.168.1.1"
+Exposes:
+- GATEWAY_HOSTNAME
+- WIFI_DIAG_EXTERNAL_HOST
+- WIFI_DIAG_EXTERNAL_URL
+- SERVICES (list)
 """
 
-GATEWAY_HOSTNAME = None
+import os
+import json
 
-WIFI_DIAG_EXTERNAL_HOST = "www.google.com"
-WIFI_DIAG_EXTERNAL_URL = "https://www.google.com/generate_204"
+DEFAULT_CONFIG_PATH = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "config", "targets.json"))
 
-SERVICES = [
-    # Local / baseline
-    {
-        "name": "gateway",
-        "hostname": GATEWAY_HOSTNAME,
-        "url": "",
-        "tags": ["gateway", "wifi_path", "baseline"],
-        "ping": {"enabled": True, "count": 5, "timeout": 1.0},
-        "dns": {"enabled": False, "timeout": 1.0},
-        "http": {"enabled": False, "timeout": 2.0},
-    },
-    {
-        "name": "google",
-        "hostname": "www.google.com",
-        "url": "https://www.google.com/generate_204",
-        "tags": ["baseline", "public_web"],
-        "ping": {"enabled": True, "count": 5, "timeout": 1.0},
-        "dns": {"enabled": True, "timeout": 2.0},
-        "http": {"enabled": True, "timeout": 3.0},
-    },
-    {
-        "name": "cloudflare",
-        "hostname": "1.1.1.1",
-        "url": "https://1.1.1.1/",
-        "tags": ["baseline", "public_dns"],
-        "ping": {"enabled": True, "count": 5, "timeout": 1.0},
-        "dns": {"enabled": False, "timeout": 2.0},
-        "http": {"enabled": True, "timeout": 3.0},
-    },
+_default = {
+    "GATEWAY_HOSTNAME": None,
+    "WIFI_DIAG_EXTERNAL_HOST": "www.google.com",
+    "WIFI_DIAG_EXTERNAL_URL": "https://www.google.com/generate_204",
+    "SERVICES": [
+        {
+            "name": "gateway",
+            "hostname": "",
+            "url": "",
+            "tags": ["gateway", "wifi_path", "baseline"],
+            "ping": {"enabled": True, "count": 5, "timeout": 1.0},
+            "dns": {"enabled": False, "timeout": 1.0},
+            "http": {"enabled": False, "timeout": 2.0},
+        }
+    ],
+}
 
-    # Bocconi / university
-    {
-        "name": "bocconi_www",
-        "hostname": "www.unibocconi.it",
-        "url": "https://www.unibocconi.it/en/",
-        "tags": ["bocconi", "university"],
-        "ping": {"enabled": True, "count": 3, "timeout": 1.5},
-        "dns": {"enabled": True, "timeout": 2.0},
-        "http": {"enabled": True, "timeout": 4.0},
-    },
 
-    # Video calls
-    {
-        "name": "zoom",
-        "hostname": "zoom.us",
-        "url": "https://zoom.us/",
-        "tags": ["video_call"],
-        "ping": {"enabled": True, "count": 3, "timeout": 1.5},
-        "dns": {"enabled": True, "timeout": 2.0},
-        "http": {"enabled": True, "timeout": 4.0},
-    },
-    {
-        "name": "teams",
-        "hostname": "teams.microsoft.com",
-        "url": "https://teams.microsoft.com/",
-        "tags": ["video_call"],
-        "ping": {"enabled": True, "count": 3, "timeout": 1.5},
-        "dns": {"enabled": True, "timeout": 2.0},
-        "http": {"enabled": True, "timeout": 4.0},
-    },
-    {
-        "name": "meet",
-        "hostname": "meet.google.com",
-        "url": "https://meet.google.com/",
-        "tags": ["video_call"],
-        "ping": {"enabled": True, "count": 3, "timeout": 1.5},
-        "dns": {"enabled": True, "timeout": 2.0},
-        "http": {"enabled": True, "timeout": 4.0},
-    },
+def _load_from_json(path=DEFAULT_CONFIG_PATH):
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            gw = data.get("GATEWAY_HOSTNAME")
+            wifi_host = data.get("WIFI_DIAG_EXTERNAL_HOST", _default["WIFI_DIAG_EXTERNAL_HOST"])
+            wifi_url = data.get("WIFI_DIAG_EXTERNAL_URL", _default["WIFI_DIAG_EXTERNAL_URL"])
+            services = data.get("SERVICES", _default["SERVICES"])
+            return {
+                "GATEWAY_HOSTNAME": gw,
+                "WIFI_DIAG_EXTERNAL_HOST": wifi_host,
+                "WIFI_DIAG_EXTERNAL_URL": wifi_url,
+                "SERVICES": services,
+            }
+    except Exception:
+        # fall back to defaults if JSON invalid
+        pass
+    return _default.copy()
 
-    # Streaming / media
-    {
-        "name": "youtube",
-        "hostname": "www.youtube.com",
-        "url": "https://www.youtube.com/",
-        "tags": ["streaming", "video"],
-        "ping": {"enabled": True, "count": 3, "timeout": 1.5},
-        "dns": {"enabled": True, "timeout": 2.0},
-        "http": {"enabled": True, "timeout": 4.0},
-    },
-    {
-        "name": "spotify",
-        "hostname": "open.spotify.com",
-        "url": "https://open.spotify.com/",
-        "tags": ["streaming", "audio"],
-        "ping": {"enabled": True, "count": 3, "timeout": 1.5},
-        "dns": {"enabled": True, "timeout": 2.0},
-        "http": {"enabled": True, "timeout": 4.0},
-    },
 
-    # Dev / productivity
-    {
-        "name": "github",
-        "hostname": "github.com",
-        "url": "https://github.com/",
-        "tags": ["dev"],
-        "ping": {"enabled": True, "count": 3, "timeout": 1.5},
-        "dns": {"enabled": True, "timeout": 2.0},
-        "http": {"enabled": True, "timeout": 4.0},
-    },
+_cfg = _load_from_json()
 
-    # Firewall-ish / region-sensitive examples
-    {
-        "name": "discord",
-        "hostname": "discord.com",
-        "url": "https://discord.com/",
-        "tags": ["social", "region_sensitive", "firewall_test"],
-        "ping": {"enabled": True, "count": 3, "timeout": 2.0},
-        "dns": {"enabled": True, "timeout": 2.5},
-        "http": {"enabled": True, "timeout": 5.0},
-    },
-]
+GATEWAY_HOSTNAME = _cfg["GATEWAY_HOSTNAME"]
+WIFI_DIAG_EXTERNAL_HOST = _cfg["WIFI_DIAG_EXTERNAL_HOST"]
+WIFI_DIAG_EXTERNAL_URL = _cfg["WIFI_DIAG_EXTERNAL_URL"]
+SERVICES = _cfg["SERVICES"]

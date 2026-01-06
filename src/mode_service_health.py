@@ -12,6 +12,7 @@ from .logging_setup import setup_logging
 from . import ping_check
 from . import dns_check
 from . import http_check
+from .error_kinds import PING_EXCEPTION, DNS_EXCEPTION, HTTP_EXCEPTION
 
 LOG = logging.getLogger("netinsight.service_health")
 LOG_PATH = os.path.join("data", "netinsight_service_health.csv")
@@ -68,17 +69,17 @@ def run_service_health(domain, log_path=None):
     try:
         ping_r = ping_check.run_ping(domain, count=2, timeout=1.5)
     except Exception as e:
-        ping_r = {"received": 0, "error_kind": "ping_exception", "error": str(e)}
+        ping_r = {"received": 0, "error_kind": PING_EXCEPTION, "error": str(e)}
 
     try:
         dns_r = dns_check.run_dns(domain, timeout=2.5)
     except Exception as e:
-        dns_r = {"ok": False, "ip": None, "error_kind": "dns_exception", "error": str(e)}
+        dns_r = {"ok": False, "ip": None, "error_kind": DNS_EXCEPTION, "error": str(e)}
 
     try:
         http_r = http_check.run_http(url, timeout=5.0)
     except Exception as e:
-        http_r = {"ok": False, "error_kind": "http_exception", "error": str(e)}
+        http_r = {"ok": False, "error_kind": HTTP_EXCEPTION, "error": str(e)}
 
     state = classify_service_state(ping_r, dns_r, http_r)
 

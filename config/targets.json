@@ -1,0 +1,247 @@
+{
+  "GATEWAY_HOSTNAME": "127.0.1.1",
+  "WIFI_DIAG_EXTERNAL_HOST": "www.google.com",
+  "WIFI_DIAG_EXTERNAL_URL": "https://www.google.com/generate_204",
+  "SERVICES": [
+    {
+      "name": "gateway",
+      "hostname": "127.0.1.1",
+      "url": "",
+      "tags": [
+        "gateway",
+        "wifi_path",
+        "baseline"
+      ],
+      "ping": {
+        "enabled": true,
+        "count": 5,
+        "timeout": 1.0
+      },
+      "dns": {
+        "enabled": false,
+        "timeout": 1.0
+      },
+      "http": {
+        "enabled": false,
+        "timeout": 2.0
+      }
+    },
+    {
+      "name": "google",
+      "hostname": "www.google.com",
+      "url": "https://www.google.com/generate_204",
+      "tags": [
+        "baseline",
+        "public_web"
+      ],
+      "ping": {
+        "enabled": true,
+        "count": 5,
+        "timeout": 1.0
+      },
+      "dns": {
+        "enabled": true,
+        "timeout": 2.0
+      },
+      "http": {
+        "enabled": true,
+        "timeout": 3.0
+      }
+    },
+    {
+      "name": "cloudflare",
+      "hostname": "1.1.1.1",
+      "url": "https://1.1.1.1/",
+      "tags": [
+        "baseline",
+        "public_dns"
+      ],
+      "ping": {
+        "enabled": true,
+        "count": 5,
+        "timeout": 1.0
+      },
+      "dns": {
+        "enabled": false,
+        "timeout": 2.0
+      },
+      "http": {
+        "enabled": true,
+        "timeout": 3.0
+      }
+    },
+    {
+      "name": "bocconi_www",
+      "hostname": "www.unibocconi.it",
+      "url": "https://www.unibocconi.it/en/",
+      "tags": [
+        "bocconi",
+        "university"
+      ],
+      "ping": {
+        "enabled": true,
+        "count": 3,
+        "timeout": 1.5
+      },
+      "dns": {
+        "enabled": true,
+        "timeout": 2.0
+      },
+      "http": {
+        "enabled": true,
+        "timeout": 4.0
+      }
+    },
+    {
+      "name": "zoom",
+      "hostname": "zoom.us",
+      "url": "https://zoom.us/",
+      "tags": [
+        "video_call"
+      ],
+      "ping": {
+        "enabled": true,
+        "count": 3,
+        "timeout": 1.5
+      },
+      "dns": {
+        "enabled": true,
+        "timeout": 2.0
+      },
+      "http": {
+        "enabled": true,
+        "timeout": 4.0
+      }
+    },
+    {
+      "name": "teams",
+      "hostname": "teams.microsoft.com",
+      "url": "https://teams.microsoft.com/",
+      "tags": [
+        "video_call"
+      ],
+      "ping": {
+        "enabled": true,
+        "count": 3,
+        "timeout": 1.5
+      },
+      "dns": {
+        "enabled": true,
+        "timeout": 2.0
+      },
+      "http": {
+        "enabled": true,
+        "timeout": 4.0
+      }
+    },
+    {
+      "name": "meet",
+      "hostname": "meet.google.com",
+      "url": "https://meet.google.com/",
+      "tags": [
+        "video_call"
+      ],
+      "ping": {
+        "enabled": true,
+        "count": 3,
+        "timeout": 1.5
+      },
+      "dns": {
+        "enabled": true,
+        "timeout": 2.0
+      },
+      "http": {
+        "enabled": true,
+        "timeout": 4.0
+      }
+    },
+    {
+      "name": "youtube",
+      "hostname": "www.youtube.com",
+      "url": "https://www.youtube.com/",
+      "tags": [
+        "streaming",
+        "video"
+      ],
+      "ping": {
+        "enabled": true,
+        "count": 3,
+        "timeout": 1.5
+      },
+      "dns": {
+        "enabled": true,
+        "timeout": 2.0
+      },
+      "http": {
+        "enabled": true,
+        "timeout": 4.0
+      }
+    },
+    {
+      "name": "spotify",
+      "hostname": "open.spotify.com",
+      "url": "https://open.spotify.com/",
+      "tags": [
+        "streaming",
+        "audio"
+      ],
+      "ping": {
+        "enabled": true,
+        "count": 3,
+        "timeout": 1.5
+      },
+      "dns": {
+        "enabled": true,
+        "timeout": 2.0
+      },
+      "http": {
+        "enabled": true,
+        "timeout": 4.0
+      }
+    },
+    {
+      "name": "github",
+      "hostname": "github.com",
+      "url": "https://github.com/",
+      "tags": [
+        "dev"
+      ],
+      "ping": {
+        "enabled": true,
+        "count": 3,
+        "timeout": 1.5
+      },
+      "dns": {
+        "enabled": true,
+        "timeout": 2.0
+      },
+      "http": {
+        "enabled": true,
+        "timeout": 4.0
+      }
+    },
+    {
+      "name": "discord",
+      "hostname": "discord.com",
+      "url": "https://discord.com/",
+      "tags": [
+        "social",
+        "region_sensitive",
+        "firewall_test"
+      ],
+      "ping": {
+        "enabled": true,
+        "count": 3,
+        "timeout": 2.0
+      },
+      "dns": {
+        "enabled": true,
+        "timeout": 2.5
+      },
+      "http": {
+        "enabled": true,
+        "timeout": 5.0
+      }
+    }
+  ]
+}

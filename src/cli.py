@@ -4,7 +4,7 @@ Simple command-line interface for NetInsight.
 
 Examples:
   python3 -m src.cli baseline --once
-  python3 -m src.cli wifi-diag --rounds 5 --gateway 192.168.1.1
+  python3 -m src.cli wifi-diag --rounds 5
   python3 -m src.cli service-health -n discord.com
   python3 -m src.cli speedtest
 """

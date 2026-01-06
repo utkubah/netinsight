@@ -1,20 +1,13 @@
 # src/main.py
 """
-Baseline logger using the improved CSV schema (csv_log).
-
-Enhancements:
-- --once : run single round
-- --interval : change interval
-- --output / -o : csv path
-- --gateway : override gateway IP for gateway-tagged services
-- --services-file : provide a JSON file containing a SERVICES list
-- --rotate : rotate existing CSV to avoid schema mismatch
-- --debug : enable debug logging
+Baseline logger and simple CLI. This version persists gateway into config/targets.json.
 """
 import argparse
 import json
 import logging
+import tempfile
 import os
+import re
 import time
 from datetime import datetime
 
@@ -25,31 +18,148 @@ from . import ping_check
 from . import dns_check
 from . import http_check
 from . import net_utils
-
 from .error_kinds import (
     CONFIG_MISSING_HOSTNAME,
     CONFIG_MISSING_URL,
+    CONFIG_MISSING_GATEWAY,
 )
 
 LOG = logging.getLogger("netinsight.main")
 
 INTERVAL_SECONDS = 30
 LOG_PATH = "data/netinsight_log.csv"
+DEFAULT_TARGETS_JSON = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "config", "targets.json"))
 
 
-def _resolve_gateway_if_needed(hostname, tags, gateway_override=None):
+def persist_gateway(gateway_ip, targets_file_path=None, targets_module=None):
+    """
+    Persist gateway_ip into config/targets.json (atomic write). Also updates the
+    in-memory targets_module if provided (setting GATEWAY_HOSTNAME and gateway service hostnames).
+    Returns True on success, False on failure.
+    """
+    if targets_file_path is None:
+        targets_file_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "config", "targets.json"))
+
+    try:
+        # Load existing config or start fresh
+        data = {}
+        if os.path.exists(targets_file_path):
+            try:
+                with open(targets_file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+
+        if not isinstance(data, dict):
+            data = {}
+
+        # Ensure SERVICES is present: try targets_module then current module fallback
+        if "SERVICES" not in data or not isinstance(data.get("SERVICES"), list):
+            if targets_module is not None and hasattr(targets_module, "SERVICES"):
+                data["SERVICES"] = getattr(targets_module, "SERVICES")
+            else:
+                try:
+                    import src.targets_config as tc
+                    data["SERVICES"] = getattr(tc, "SERVICES", [])
+                except Exception:
+                    data["SERVICES"] = []
+
+        # Update gateway and gateway-tagged services
+        data["GATEWAY_HOSTNAME"] = gateway_ip if gateway_ip else None
+        for svc in data.get("SERVICES", []):
+            tags = svc.get("tags", []) or []
+            if "gateway" in tags:
+                svc["hostname"] = gateway_ip or ""
+
+        # Ensure directory exists
+        target_dir = os.path.dirname(targets_file_path)
+        if target_dir and not os.path.exists(target_dir):
+            os.makedirs(target_dir, exist_ok=True)
+
+        # Atomic write: write to temp file in same dir, fsync, then replace
+        fd, tmpname = tempfile.mkstemp(prefix="targets.", suffix=".tmp", dir=target_dir or ".")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as tf:
+                json.dump(data, tf, indent=2)
+                tf.flush()
+                os.fsync(tf.fileno())
+            os.replace(tmpname, targets_file_path)
+        finally:
+            if os.path.exists(tmpname):
+                try:
+                    os.remove(tmpname)
+                except Exception:
+                    pass
+
+        LOG.info("Persisted gateway %s into %s", gateway_ip, targets_file_path)
+
+        # Update in-memory module
+        if targets_module is not None:
+            try:
+                targets_module.GATEWAY_HOSTNAME = gateway_ip
+                for svc in getattr(targets_module, "SERVICES", []):
+                    tags = svc.get("tags", []) or []
+                    if "gateway" in tags:
+                        svc["hostname"] = gateway_ip or ""
+                LOG.debug("Updated in-memory targets_config with gateway=%s", gateway_ip)
+            except Exception:
+                LOG.exception("Failed to update targets_module in-memory after persisting gateway")
+
+        return True
+
+    except Exception:
+        LOG.exception("Failed to persist gateway to %s", targets_file_path)
+        return False
+
+
+
+def _resolve_hostname(svc_hostname, tags, gateway_override=None):
+    tags = tags or []
+    hostname = svc_hostname or ""
+
     if hostname:
-        return hostname
-    if "gateway" in (tags or []):
+        return hostname, None
+
+    if "gateway" in tags:
         if gateway_override:
-            return gateway_override
-        return net_utils.get_default_gateway_ip()
-    return hostname
+            return gateway_override, None
+        try:
+            gw = net_utils.get_default_gateway_ip()
+        except Exception:
+            gw = None
+        if gw:
+            return gw, None
+        return "", CONFIG_MISSING_GATEWAY
+
+    return "", CONFIG_MISSING_HOSTNAME
+
+
+def _load_services_from_file(path):
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError("services-file must be a JSON array of service dicts")
+    return data
+
+
+def _default_services():
+    # Prefer the JSON config under config/targets.json if present
+    if os.path.exists(DEFAULT_TARGETS_JSON):
+        try:
+            with open(DEFAULT_TARGETS_JSON, "r", encoding="utf-8") as f:
+                j = json.load(f)
+            svcs = j.get("SERVICES")
+            if isinstance(svcs, list):
+                return svcs
+        except Exception:
+            pass
+    # fall back to targets_config module values
+    return getattr(targets_config, "SERVICES", [])
 
 
 def run_once(round_id=None, services=None, log_path=None, gateway_override=None):
     if services is None:
-        services = targets_config.SERVICES
+        services = _default_services()
     if log_path is None:
         log_path = LOG_PATH
     if round_id is None:
@@ -60,12 +170,13 @@ def run_once(round_id=None, services=None, log_path=None, gateway_override=None)
 
     for svc in services:
         name = svc.get("name", "")
-        tags = svc.get("tags", [])
-        hostname = _resolve_gateway_if_needed(svc.get("hostname"), tags, gateway_override=gateway_override)
-        url = svc.get("url", "")
+        tags = svc.get("tags", []) or []
+        url = svc.get("url", "") or ""
+
+        hostname, missing_kind = _resolve_hostname(svc.get("hostname"), tags, gateway_override=gateway_override)
 
         # PING
-        ping_cfg = svc.get("ping", {})
+        ping_cfg = svc.get("ping", {}) or {}
         if ping_cfg.get("enabled"):
             if not hostname:
                 rows.append(
@@ -78,14 +189,13 @@ def run_once(round_id=None, services=None, log_path=None, gateway_override=None)
                         tags=",".join(tags),
                         probe_type="ping",
                         success=False,
-                        error_kind=CONFIG_MISSING_HOSTNAME,
+                        error_kind=missing_kind or CONFIG_MISSING_HOSTNAME,
                         error_message="hostname missing for ping",
-                        details=json.dumps({"reason": "missing hostname"}, separators=(",", ":"), sort_keys=True),
+                        details=json.dumps({"reason": "missing hostname"}, separators=(",", ":")),
                     )
                 )
             else:
                 r = ping_check.run_ping(hostname, count=ping_cfg.get("count", 3), timeout=ping_cfg.get("timeout", 1.0))
-
                 success = (r.get("received", 0) > 0)
                 details = {
                     "sent": r.get("sent"),
@@ -93,7 +203,6 @@ def run_once(round_id=None, services=None, log_path=None, gateway_override=None)
                     "latencies_ms": r.get("latencies_ms") or [],
                     "partial_success": bool(success and (r.get("packet_loss_pct") or 0) > 0),
                 }
-
                 rows.append(
                     make_row(
                         mode="baseline",
@@ -110,13 +219,13 @@ def run_once(round_id=None, services=None, log_path=None, gateway_override=None)
                         packet_loss_pct=r.get("packet_loss_pct"),
                         error_kind=r.get("error_kind"),
                         error_message=r.get("error"),
-                        details=json.dumps(details, separators=(",", ":"), sort_keys=True),
+                        details=json.dumps(details, separators=(",", ":")),
                     )
                 )
             ping_count += 1
 
         # DNS
-        dns_cfg = svc.get("dns", {})
+        dns_cfg = svc.get("dns", {}) or {}
         if dns_cfg.get("enabled"):
             if not hostname:
                 rows.append(
@@ -129,14 +238,13 @@ def run_once(round_id=None, services=None, log_path=None, gateway_override=None)
                         tags=",".join(tags),
                         probe_type="dns",
                         success=False,
-                        error_kind=CONFIG_MISSING_HOSTNAME,
+                        error_kind=missing_kind or CONFIG_MISSING_HOSTNAME,
                         error_message="hostname missing for dns",
-                        details=json.dumps({"reason": "missing hostname"}, separators=(",", ":"), sort_keys=True),
+                        details=json.dumps({"reason": "missing hostname"}, separators=(",", ":")),
                     )
                 )
             else:
                 r = dns_check.run_dns(hostname, timeout=dns_cfg.get("timeout", 2.0))
-                details = {"ip": r.get("ip")}
                 rows.append(
                     make_row(
                         mode="baseline",
@@ -150,13 +258,13 @@ def run_once(round_id=None, services=None, log_path=None, gateway_override=None)
                         latency_ms=r.get("dns_ms"),
                         error_kind=r.get("error_kind"),
                         error_message=r.get("error"),
-                        details=json.dumps(details, separators=(",", ":"), sort_keys=True),
+                        details=json.dumps({"ip": r.get("ip")}, separators=(",", ":")),
                     )
                 )
             dns_count += 1
 
         # HTTP
-        http_cfg = svc.get("http", {})
+        http_cfg = svc.get("http", {}) or {}
         if http_cfg.get("enabled"):
             if not url:
                 rows.append(
@@ -171,7 +279,7 @@ def run_once(round_id=None, services=None, log_path=None, gateway_override=None)
                         success=False,
                         error_kind=CONFIG_MISSING_URL,
                         error_message="url missing",
-                        details=json.dumps({"reason": "missing url"}, separators=(",", ":"), sort_keys=True),
+                        details=json.dumps({"reason": "missing url"}, separators=(",", ":")),
                     )
                 )
             else:
@@ -191,7 +299,7 @@ def run_once(round_id=None, services=None, log_path=None, gateway_override=None)
                         status_code=r.get("status_code"),
                         error_kind=r.get("error_kind"),
                         error_message=r.get("error"),
-                        details=json.dumps(details, separators=(",", ":"), sort_keys=True),
+                        details=json.dumps(details, separators=(",", ":")),
                     )
                 )
             http_count += 1
@@ -214,26 +322,18 @@ def _parse_args():
     p.add_argument("--output", "-o", default=LOG_PATH, help="CSV log path")
     p.add_argument("--gateway", default=None, help="Override gateway IP for 'gateway' probes (if not provided, auto-detect).")
     p.add_argument("--services-file", default=None, help="Optional JSON file containing a SERVICES array")
-    p.add_argument("--rotate", action="store_true", help="Rotate existing log file with timestamp before starting")
+    p.add_argument("--rotate", action="store_true", help="Rotate existing CSV with timestamp before starting")
     p.add_argument("--debug", action="store_true", help="Enable debug logging")
     return p.parse_args()
-
-
-def _load_services_from_file(path):
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    if not isinstance(data, list):
-        raise ValueError("services-file must be a JSON array of service dicts")
-    return data
 
 
 def _rotate_if_requested(path):
     if os.path.exists(path):
         ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-        new_name = f"{path}.{ts}.bak"
+        new_name = "%s.%s.bak" % (path, ts)
         os.replace(path, new_name)
         LOG.info("Rotated existing log %s -> %s", path, new_name)
-        print(f"Rotated existing log {path} -> {new_name}")
+        print("Rotated existing log %s -> %s" % (path, new_name))
 
 
 def main():
@@ -249,16 +349,28 @@ def main():
 
     services = None
     if args.services_file:
-        services = _load_services_from_file(args.services_file)
-        LOG.info("Loaded %d services from %s", len(services), args.services_file)
+        try:
+            services = _load_services_from_file(args.services_file)
+            LOG.info("Loaded %d services from %s", len(services), args.services_file)
+        except Exception:
+            LOG.exception("Failed to load services-file")
 
-    LOG.info("NetInsight baseline starting interval=%s output=%s gateway_override=%s", args.interval, args.output, args.gateway)
+    # decide on gateway and persist it to the JSON config and update in-memory targets_config
+    gw_used = args.gateway if args.gateway else net_utils.get_default_gateway_ip()
+
+    if gw_used:
+        persist_gateway(gw_used, targets_file_path=DEFAULT_TARGETS_JSON, targets_module=targets_config)
+    else:
+        LOG.debug("No gateway detected/overridden during startup; will emit config_missing_gateway rows for gateway probes.")
+
+    LOG.info("NetInsight baseline starting interval=%s output=%s gateway=%s", args.interval, args.output, gw_used)
 
     if args.once:
         summary = run_once(log_path=args.output, gateway_override=args.gateway, services=services)
-        print(f"Completed run {summary['round_id']}: rows={summary['total_rows']} failures={summary['failures']} output={args.output}")
+        print("Completed run %s rows=%s failures=%s output=%s" % (summary["round_id"], summary["total_rows"], summary["failures"], args.output))
         return
 
+    print("NetInsight running. Press Ctrl+C to stop. Output:", args.output)
     try:
         while True:
             try:
@@ -267,8 +379,8 @@ def main():
                 LOG.exception("Unhandled exception during run_once; continuing")
             time.sleep(args.interval)
     except KeyboardInterrupt:
-        LOG.info("NetInsight baseline stopped by user (KeyboardInterrupt).")
-        print("NetInsight baseline stopped by user.")
+        print("NetInsight stopped.")
+        LOG.info("NetInsight stopped by user (KeyboardInterrupt).")
 
 
 if __name__ == "__main__":

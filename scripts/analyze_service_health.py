@@ -1,216 +1,291 @@
-# scripts/analyze_service_health.py
+#!/usr/bin/env python3
 """
-NetInsight - Service Health Analysis
+NetInsight - Service Health Analysis (schema-flex)
+
+Supports BOTH schemas:
+1) Old schema (your early version):
+   columns like ping_ok,dns_ok,http_ok,service_state,service_reason,...
+
+2) New unified schema (current main):
+   columns like timestamp,mode,round_id,service_name,...,status_code,error_kind,details(JSON)
+   where details includes nested ping/dns/http + "state".
 
 Reads:
   data/netinsight_service_health.csv
+  (optional) data/netinsight_service_health_old.csv  (auto-included if present)
 
 Writes:
   data/service_health_summary.csv
+  data/service_health_state_distribution.csv
   data/service_health_by_domain.csv
   data/service_health_recent.csv
 
 Run:
   python3 scripts/analyze_service_health.py
-
-What it does:
-- Parses the service health log produced by src/mode_service_health.py
-- Produces:
-  (1) Overall summary (counts/percentages by service_state)
-  (2) Per-domain summary (how often each state happened per domain)
-  (3) Recent results table (last N rows)
 """
 
+from __future__ import annotations
+
+import json
 from pathlib import Path
 import pandas as pd
 
 IN_PATH = Path("data") / "netinsight_service_health.csv"
+OLD_PATH = Path("data") / "netinsight_service_health_old.csv"
+
 OUT_SUMMARY = Path("data") / "service_health_summary.csv"
+OUT_DIST = Path("data") / "service_health_state_distribution.csv"
 OUT_BY_DOMAIN = Path("data") / "service_health_by_domain.csv"
 OUT_RECENT = Path("data") / "service_health_recent.csv"
 
-TIMEZONE = "Europe/Istanbul"
-RECENT_N = 50
+TIMEZONE = "Europe/Rome"  # project timezone (you can change if needed)
 
 
-def parse_timestamp(ts: pd.Series) -> pd.Series:
-    """
-    Parse timestamps and normalize to TIMEZONE.
-    - If tz-aware: convert to TIMEZONE
-    - If tz-naive: assume UTC then convert to TIMEZONE
-    """
-    dt = pd.to_datetime(ts, errors="coerce", utc=False)
-
-    if hasattr(dt.dt, "tz") and dt.dt.tz is not None:
-        return dt.dt.tz_convert(TIMEZONE)
-
-    dt = dt.dt.tz_localize("UTC", nonexistent="shift_forward", ambiguous="NaT")
-    return dt.dt.tz_convert(TIMEZONE)
+BLOCKEDISH_STATES = {
+    "possible_blocked_or_restricted",
+    "connection_issue_or_blocked",
+    "connectivity_issue_or_firewall",
+    "dns_failure",
+}
 
 
-def coerce_bool(s: pd.Series) -> pd.Series:
-    if s.dtype == bool:
-        return s
-    s2 = s.astype(str).str.strip().str.lower()
-    mapping = {"true": True, "false": False, "1": True, "0": False, "yes": True, "no": False}
-    out = s2.map(mapping)
-    out = out.fillna(False)
-    return out.astype(bool)
+def ensure_tz(ts: pd.Series) -> pd.Series:
+    d = pd.to_datetime(ts, errors="coerce", utc=False)
+    if hasattr(d.dt, "tz") and d.dt.tz is not None:
+        return d.dt.tz_convert(TIMEZONE)
+    d = d.dt.tz_localize("UTC", nonexistent="shift_forward", ambiguous="NaT")
+    return d.dt.tz_convert(TIMEZONE)
 
 
-def require_columns(df: pd.DataFrame, cols: list[str]) -> None:
-    missing = [c for c in cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing columns in {IN_PATH}: {missing}. Found: {list(df.columns)}")
+def _safe_json_loads(x: str) -> dict:
+    if x is None:
+        return {}
+    s = str(x).strip()
+    if not s:
+        return {}
+    try:
+        return json.loads(s)
+    except Exception:
+        return {}
+
+
+def _normalize_old_schema(df: pd.DataFrame) -> pd.DataFrame:
+    # Expected old columns:
+    # timestamp,mode,service_name,hostname,url,tags,ping_ok,dns_ok,http_ok,
+    # ping_error_kind,dns_error_kind,http_error_kind,http_status_code,service_state,service_reason
+    out = pd.DataFrame()
+    out["timestamp"] = ensure_tz(df["timestamp"])
+    out["service_name"] = df.get("service_name", "")
+    out["service_state"] = df.get("service_state", "inconclusive").astype(str)
+    out["http_status_code"] = pd.to_numeric(df.get("http_status_code"), errors="coerce")
+
+    def _to_bool(v):
+        if pd.isna(v):
+            return False
+        if isinstance(v, bool):
+            return v
+        s = str(v).strip().lower()
+        return s in ("1", "true", "yes", "y")
+
+    out["ping_ok"] = df.get("ping_ok", False).map(_to_bool)
+    out["dns_ok"] = df.get("dns_ok", False).map(_to_bool)
+    out["http_ok"] = df.get("http_ok", False).map(_to_bool)
+
+    out["ping_error_kind"] = df.get("ping_error_kind")
+    out["dns_error_kind"] = df.get("dns_error_kind")
+    out["http_error_kind"] = df.get("http_error_kind")
+    out["service_reason"] = df.get("service_reason", "")
+
+    return out.dropna(subset=["timestamp"]).copy()
+
+
+def _normalize_new_schema(df: pd.DataFrame) -> pd.DataFrame:
+    # New unified schema:
+    # timestamp,mode,round_id,service_name,hostname,url,tags,probe_type,success,latency_ms,...,status_code,error_kind,error_message,details(JSON)
+    out_rows = []
+    for r in df.itertuples(index=False):
+        row = r._asdict()
+
+        details = _safe_json_loads(row.get("details"))
+        ping = details.get("ping") if isinstance(details.get("ping"), dict) else {}
+        dns = details.get("dns") if isinstance(details.get("dns"), dict) else {}
+        http = details.get("http") if isinstance(details.get("http"), dict) else {}
+
+        # State can live in details["state"] (current) or row["error_kind"] (sometimes)
+        state = details.get("state")
+        if not state:
+            # if error_kind looks like a state (e.g., "healthy") keep it
+            ek = row.get("error_kind")
+            if isinstance(ek, str) and ek:
+                state = ek
+            else:
+                state = "inconclusive"
+
+        # Derive ok flags from nested results
+        ping_ok = False
+        if ping:
+            if "received" in ping:
+                ping_ok = (ping.get("received", 0) or 0) > 0
+            else:
+                ping_ok = (ping.get("error_kind") == "ok")
+
+        dns_ok = False
+        if dns:
+            if "ok" in dns:
+                dns_ok = bool(dns.get("ok"))
+            else:
+                dns_ok = (dns.get("error_kind") == "ok")
+
+        http_ok = False
+        if http:
+            if "ok" in http:
+                http_ok = bool(http.get("ok"))
+            else:
+                http_ok = (http.get("error_kind") == "ok")
+
+        # Prefer HTTP status from top-level status_code, else from details.http.status_code
+        status_code = row.get("status_code")
+        if status_code is None or (isinstance(status_code, float) and pd.isna(status_code)):
+            status_code = http.get("status_code")
+
+        service_reason = details.get("reason", "")
+        if not service_reason:
+            # Keep it short; we don't want to invent a long narrative
+            service_reason = ""
+
+        out_rows.append(
+            {
+                "timestamp": row.get("timestamp"),
+                "service_name": row.get("service_name", ""),
+                "service_state": str(state),
+                "http_status_code": status_code,
+                "ping_ok": bool(ping_ok),
+                "dns_ok": bool(dns_ok),
+                "http_ok": bool(http_ok),
+                "ping_error_kind": ping.get("error_kind") if ping else None,
+                "dns_error_kind": dns.get("error_kind") if dns else None,
+                "http_error_kind": http.get("error_kind") if http else None,
+                "service_reason": service_reason,
+            }
+        )
+
+    out = pd.DataFrame(out_rows)
+    out["timestamp"] = ensure_tz(out["timestamp"])
+    out["http_status_code"] = pd.to_numeric(out["http_status_code"], errors="coerce")
+    return out.dropna(subset=["timestamp"]).copy()
+
+
+def load_and_normalize(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path)
+
+    # Detect schema
+    if "ping_ok" in df.columns and "service_state" in df.columns:
+        return _normalize_old_schema(df)
+
+    # New schema must have details + service_name + status_code/error_kind fields
+    if "details" in df.columns and "service_name" in df.columns:
+        return _normalize_new_schema(df)
+
+    raise ValueError(
+        f"Unrecognized schema in {path}. Columns: {list(df.columns)}"
+    )
 
 
 def main() -> None:
     if not IN_PATH.exists():
-        raise FileNotFoundError(f"Input not found: {IN_PATH}. Run src/mode_service_health.py first.")
+        raise FileNotFoundError(f"Input not found: {IN_PATH}")
 
-    df = pd.read_csv(IN_PATH)
+    parts = [load_and_normalize(IN_PATH)]
+    if OLD_PATH.exists():
+        try:
+            parts.append(load_and_normalize(OLD_PATH))
+        except Exception:
+            # If old file exists but is weird, ignore it (we don't want to block current runs)
+            pass
 
-    required = [
-        "timestamp", "mode", "service_name", "hostname", "url",
-        "ping_ok", "dns_ok", "http_ok",
-        "ping_error_kind", "dns_error_kind", "http_error_kind",
-        "http_status_code", "service_state", "service_reason",
-    ]
-    require_columns(df, required)
+    df = pd.concat(parts, ignore_index=True).dropna(subset=["timestamp"]).copy()
+    if df.empty:
+        print("No rows to analyze.")
+        return
 
-    # Parse time
-    df["timestamp"] = parse_timestamp(df["timestamp"])
-    df = df.dropna(subset=["timestamp"]).copy()
+    df = df.sort_values(["timestamp", "service_name"]).reset_index(drop=True)
 
-    # Normalize booleans
-    df["ping_ok"] = coerce_bool(df["ping_ok"])
-    df["dns_ok"] = coerce_bool(df["dns_ok"])
-    df["http_ok"] = coerce_bool(df["http_ok"])
+    # Simple tags
+    df["is_healthy"] = df["service_state"].astype(str).eq("healthy")
+    df["is_blockedish"] = df["service_state"].astype(str).isin(BLOCKEDISH_STATES)
 
-    # status code numeric
-    df["http_status_code"] = pd.to_numeric(df["http_status_code"], errors="coerce")
-
-    # Some convenience columns
-    df["date"] = df["timestamp"].dt.date
-    df["hour"] = df["timestamp"].dt.hour
-
-    # Sort
-    df = df.sort_values("timestamp").reset_index(drop=True)
-
-    # --- (1) Overall summary -----------------------------------------
-    total = len(df)
-    state_counts = df["service_state"].astype(str).value_counts(dropna=False).reset_index()
-    state_counts.columns = ["service_state", "count"]
-    state_counts["pct"] = (100.0 * state_counts["count"] / max(total, 1)).round(2)
-
-    # Quick signal metrics (overall)
-    # "blocked-ish" bucket (from Utku's classifier)
-    blockedish_states = {
-        "possible_blocked_or_restricted",
-        "connection_issue_or_blocked",
-        "connectivity_issue_or_firewall",
-    }
-    df["is_blockedish"] = df["service_state"].astype(str).isin(blockedish_states)
-
-    overall = pd.DataFrame(
-        {
-            "metric": [
-                "rows_total",
-                "domains_unique",
-                "healthy_pct",
-                "blockedish_pct",
-                "dns_ok_pct",
-                "http_ok_pct",
-                "ping_ok_pct",
-            ],
-            "value": [
-                total,
-                df["service_name"].nunique(),
-                round(100.0 * (df["service_state"].astype(str) == "healthy").mean(), 2),
-                round(100.0 * df["is_blockedish"].mean(), 2),
-                round(100.0 * df["dns_ok"].mean(), 2),
-                round(100.0 * df["http_ok"].mean(), 2),
-                round(100.0 * df["ping_ok"].mean(), 2),
-            ],
-        }
+    # --- Summary ---
+    summary = pd.DataFrame(
+        [
+            {"metric": "rows_total", "value": float(len(df))},
+            {"metric": "domains_unique", "value": float(df["service_name"].nunique())},
+            {"metric": "healthy_pct", "value": round(100.0 * df["is_healthy"].mean(), 2)},
+            {"metric": "blockedish_pct", "value": round(100.0 * df["is_blockedish"].mean(), 2)},
+        ]
     )
+    summary.to_csv(OUT_SUMMARY, index=False)
 
-    summary = overall.merge(
-        state_counts.assign(metric=lambda x: "state_" + x["service_state"].astype(str) + "_pct")[["metric", "pct"]],
-        on="metric",
-        how="left",
-    )
-    # keep both overall metrics and state pct table separately (cleaner)
-    overall.to_csv(OUT_SUMMARY, index=False)
-
-    # Also write a separate distribution file next to it (more readable)
-    dist_path = Path("data") / "service_health_state_distribution.csv"
-    state_counts.to_csv(dist_path, index=False)
-
-    # --- (2) Per-domain summary --------------------------------------
-    # Per domain: how many runs + share of each state
-    per_domain = (
-        df.groupby(["service_name", "service_state"])
+    # --- State distribution ---
+    dist = (
+        df.groupby("service_state")
         .size()
         .reset_index(name="count")
+        .sort_values("count", ascending=False)
+    )
+    dist["pct"] = (100.0 * dist["count"] / dist["count"].sum()).round(2)
+    dist.to_csv(OUT_DIST, index=False)
+
+    # --- By domain ---
+    by_domain = (
+        df.groupby("service_name")
+        .agg(
+            runs=("service_state", "size"),
+            healthy_pct=("is_healthy", lambda s: round(100.0 * s.mean(), 2)),
+            blockedish_pct=("is_blockedish", lambda s: round(100.0 * s.mean(), 2)),
+            last_timestamp=("timestamp", "max"),
+        )
+        .reset_index()
     )
 
-    # Pivot states into columns
-    per_domain_pivot = per_domain.pivot_table(
-        index="service_name",
-        columns="service_state",
-        values="count",
-        fill_value=0,
-        aggfunc="sum",
-    ).reset_index()
+    # last row per domain for last_state / last_code
+    last_rows = (
+        df.sort_values(["service_name", "timestamp"])
+        .groupby("service_name")
+        .tail(1)[["service_name", "service_state", "http_status_code"]]
+        .rename(columns={"service_state": "last_state", "http_status_code": "last_http_status_code"})
+    )
 
-    # total + key rates
-    per_domain_pivot["runs_total"] = per_domain_pivot.drop(columns=["service_name"]).sum(axis=1)
+    by_domain = by_domain.merge(last_rows, on="service_name", how="left")
+    by_domain = by_domain.sort_values(["blockedish_pct", "runs"], ascending=[False, False]).reset_index(drop=True)
+    by_domain.to_csv(OUT_BY_DOMAIN, index=False)
 
-    # Helper to safely compute %
-    def pct_col(state: str) -> pd.Series:
-        if state not in per_domain_pivot.columns:
-            return 0.0
-        return (100.0 * per_domain_pivot[state] / per_domain_pivot["runs_total"].clip(lower=1)).round(2)
-
-    per_domain_pivot["healthy_pct"] = pct_col("healthy")
-    per_domain_pivot["blockedish_pct"] = (
-        pct_col("possible_blocked_or_restricted")
-        + pct_col("connection_issue_or_blocked")
-        + pct_col("connectivity_issue_or_firewall")
-    ).round(2)
-
-    # Order: most problematic first (blockedish high), then low healthy
-    per_domain_pivot = per_domain_pivot.sort_values(
-        ["blockedish_pct", "healthy_pct", "runs_total"],
-        ascending=[False, True, False],
-    ).reset_index(drop=True)
-
-    per_domain_pivot.to_csv(OUT_BY_DOMAIN, index=False)
-
-    # --- (3) Recent table --------------------------------------------
-    recent = df.tail(RECENT_N).copy()
-    keep_cols = [
-        "timestamp", "service_name", "service_state", "http_status_code",
-        "ping_ok", "dns_ok", "http_ok",
-        "ping_error_kind", "dns_error_kind", "http_error_kind",
+    # --- Recent ---
+    recent_cols = [
+        "timestamp",
+        "service_name",
+        "service_state",
+        "http_status_code",
+        "ping_ok",
+        "dns_ok",
+        "http_ok",
+        "ping_error_kind",
+        "dns_error_kind",
+        "http_error_kind",
         "service_reason",
     ]
-    keep_cols = [c for c in keep_cols if c in recent.columns]
-    recent[keep_cols].to_csv(OUT_RECENT, index=False)
+    recent = df[recent_cols].sort_values("timestamp", ascending=False).head(50)
+    recent.to_csv(OUT_RECENT, index=False)
 
-    # Console output (short)
+    # Console
+    last = df.sort_values("timestamp").tail(1).iloc[0]
     print(f"Saved: {OUT_SUMMARY}")
-    print(f"Saved: {dist_path}")
+    print(f"Saved: {OUT_DIST}")
     print(f"Saved: {OUT_BY_DOMAIN}")
     print(f"Saved: {OUT_RECENT}")
-
-    if total > 0:
-        last = df.iloc[-1]
-        print(
-            f"Last: {last['timestamp']} domain={last['service_name']} "
-            f"state={last['service_state']} code={last['http_status_code']}"
-        )
+    print(
+        f"Last: {last['timestamp']} domain={last['service_name']} "
+        f"state={last['service_state']} code={last['http_status_code']}"
+    )
 
 
 if __name__ == "__main__":

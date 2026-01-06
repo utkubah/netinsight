@@ -1,4 +1,6 @@
 timestamp,service_name,service_state,http_status_code,ping_ok,dns_ok,http_ok,ping_error_kind,dns_error_kind,http_error_kind,service_reason
-2025-12-24 18:57:53.547163+03:00,discord.com,connection_issue_or_blocked,,False,True,False,ping_unknown_error,ok,http_timeout,"DNS ok, HTTP error_kind=http_timeout; could be firewalling, filtering, or unstable upstream connection."
-2025-12-24 18:57:54.477876+03:00,youtube.com,healthy,200.0,True,True,True,ok,ok,ok,DNS ok and HTTP returned a successful 2xx/3xx response.
-2025-12-24 18:57:55.128886+03:00,github.com,healthy,200.0,True,True,True,ok,ok,ok,DNS ok and HTTP returned a successful 2xx/3xx response.
+2026-01-06 21:25:19.237448+01:00,youtube.com,healthy,200.0,True,True,True,ok,ok,ok,
+2026-01-06 21:25:17.735454+01:00,discord.com,healthy,200.0,True,True,True,ok,ok,ok,
+2025-12-24 16:57:55.128886+01:00,github.com,healthy,200.0,True,True,True,ok,ok,ok,DNS ok and HTTP returned a successful 2xx/3xx response.
+2025-12-24 16:57:54.477876+01:00,youtube.com,healthy,200.0,True,True,True,ok,ok,ok,DNS ok and HTTP returned a successful 2xx/3xx response.
+2025-12-24 16:57:53.547163+01:00,discord.com,connection_issue_or_blocked,,False,True,False,ping_unknown_error,ok,http_timeout,"DNS ok, HTTP error_kind=http_timeout; could be firewalling, filtering, or unstable upstream connection."

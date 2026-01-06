@@ -1,4 +1,4 @@
-service_name,connection_issue_or_blocked,healthy,runs_total,healthy_pct,blockedish_pct
-discord.com,1,0,1,0.0,100.0
-github.com,0,1,1,100.0,0.0
-youtube.com,0,1,1,100.0,0.0
+service_name,runs,healthy_pct,blockedish_pct,last_timestamp,last_state,last_http_status_code
+discord.com,2,50.0,50.0,2026-01-06 21:25:17.735454+01:00,healthy,200.0
+youtube.com,2,100.0,0.0,2026-01-06 21:25:19.237448+01:00,healthy,200.0
+github.com,1,100.0,0.0,2025-12-24 16:57:55.128886+01:00,healthy,200.0

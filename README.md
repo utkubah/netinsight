@@ -1,139 +1,276 @@
 # NetInsight
 
-NetInsight is a small Python tool to monitor and analyze internet connection quality
-in Bocconi dorms. It periodically runs:
+NetInsight is a small Python tool that monitors and analyzes internet connection
+quality, with a focus on unstable student Wi-Fi (e.g. dorms).
 
-- Ping tests to measure latency and packet loss
-- DNS lookup tests
-- HTTP GET requests to a stable endpoint
+It runs simple network probes at regular intervals and logs **structured data**
+for later analysis — instead of just printing raw ping output.
 
-All results are timestamped and logged. From this data we compute:
+---
+# NetInsight
 
-- Average latency and packet loss
-- Downtime periods
-- Time-of-day patterns for instability
+NetInsight is a small Python tool that logs network health in a structured way
+(ping, DNS, HTTP, simple bandwidth) so you can later see **when** and **why**
+your internet misbehaves (Wi-Fi, ISP, blocking, app/server issues).
 
-Planned extras: highlighting good/bad hours, detecting latency spikes,
-CSV export, and a simple UI for visualization.
+## Modes
 
+- **Baseline (24/7)**  
+  - Script: `src/main.py`  
+  - Log: `data/netinsight_log.csv`  
+  - Every 30s, runs `ping`, `dns`, `http` for each service in `targets_config.py`.  
+  - Metrics: latency, jitter, packet loss, dns_ms, http_ms, HTTP status, error_kind, and
+    an approximate HTTP `throughput_mbps` per request (in the `details` field).
 
+- **Wi-Fi diag**  
+  - Script: `src/mode_wifi_diag.py`  
+  - Log: `data/netinsight_wifi_diag.csv`  
+  - Short burst of pings to:
+    - `gateway` (local router)
+    - `google` (external baseline)  
+  - Used to separate “Wi-Fi/local problem” from “ISP/internet problem”.
 
+- **Speedtest**  
+  - Script: `src/mode_speedtest.py`  
+  - No CSV (just prints for now).  
+  - Runs a single speedtest (ping + download/upload Mbps) using `speedtest-cli`.
 
-### Probes & Metrics
+- **Service health / blocked sites**  
+  - Script: `src/mode_service_health.py`  
+  - Log: `data/netinsight_service_health.csv`  
+  - For each service, runs ping/dns/http once (if enabled) and classifies it as:
+    - `healthy`
+    - `dns_failure`
+    - `service_server_error` (5xx)
+    - `client_or_access_error` (4xx)
+    - `possible_blocked_or_restricted` (e.g. DNS + HTTP DNS errors, 403/451, etc.)
+    - `connection_issue_or_blocked`
+    - `connectivity_issue_or_firewall`
+    - `no_probes_configured`
+    - `inconclusive`
 
-NetInsight currently runs three types of probes on each configured service:
+---
 
-- **Ping**
-- **DNS**
-- **HTTP(S) GET**
+## Metrics (what we log and why)
 
-Each probe produces a small set of metrics that are logged to CSV (and later
-aggregated/analyzed). The goal is that from these raw numbers we can build
-sentences a human actually cares about, like *"Zoom should be fine right now"*
-or *"Discord looks DNS-blocked on this network"*.
+### Ping metrics (from `ping_check.py`)
 
-#### Ping metrics
+Per service (if ping enabled):
 
-For each target NetInsight sends multiple single-packet pings and measures
-latency in Python:
+- `latency_ms`  
+  Average round-trip time (ms).
+- `latency_p95_ms`  
+  95th percentile latency — tells you how bad the high-end spikes are.
+- `jitter_ms`  
+  Mean absolute difference between consecutive ping samples. High jitter is
+  bad for gaming, calls, and anything real-time.
+- `packet_loss_pct`  
+  Percentage of pings that did not get a response. >1–2% is already noticeable
+  for real-time apps.
+- `error_kind`  
+  Coarse error classification when ping fails, e.g.:
+  - `ping_dns_failure`
+  - `ping_unreachable`
+  - `ping_timeout`
+  - `ping_unknown_error`
 
-- `latency_avg_ms`: average round-trip time.
-- `latency_min_ms`, `latency_max_ms`: best and worst samples.
-- `latency_p95_ms`: 95th percentile latency (how bad the spikes are).
-- `jitter_ms`: mean absolute difference between consecutive samples.
-- `packet_loss_pct`: % of lost packets.
-- `error_kind`: high-level failure type if all packets fail
-  (e.g. `ping_timeout`, `ping_unreachable`, `ping_dns_failure`).
+**How to read:**
 
-Rules of thumb for interpretation:
+- Low latency + low jitter + ~0% loss → great for gaming / calls.
+- Low latency but **high jitter** → OK for browsing, but choppy voice/video.
+- High loss → serious problems, especially if persistent.
+- `ping_dns_failure` → DNS is failing *before* we can even ping the host.
 
-- `latency_avg_ms < 40 ms`, `jitter_ms < 10 ms`, `packet_loss_pct < 1%`  
-  → **great** for gaming and video calls.
-- `latency_avg_ms 40–80 ms`, `jitter_ms < 20 ms`, `packet_loss_pct < 2%`  
-  → **fine** for video calls / casual gaming.
-- `jitter_ms > 30 ms` or `packet_loss_pct > 5%`  
-  → real-time apps (Valorant, Zoom) will feel **choppy/unstable** even if avg latency looks OK.
-- `error_kind = ping_timeout` or `ping_unreachable`  
-  → host is not reachable at ICMP level (could be down, could be blocking ping).
+---
 
-Example outcomes that analysis code can build:
+### DNS metrics (from `dns_check.py`)
 
-- *"Latency and jitter to Google are low and stable → good conditions for Zoom."*
-- *"High jitter and ~10% packet loss to Discord suggest unstable Wi-Fi or congestion."*
+Per service (if DNS enabled):
 
-#### DNS metrics
-
-DNS probes use the system resolver via `socket.gethostbyname(hostname)`:
-
-- `dns_ms`: time to resolve the hostname (ms).
-- `ok`: whether resolution succeeded.
-- `ip`: resolved IPv4 address on success.
+- `latency_ms` (`dns_ms` in code)  
+  How long the DNS resolver takes to return an IP.
 - `error_kind`:
-  - `dns_temp_failure` – temporary resolver failure (e.g. campus DNS issue).
-  - `dns_nxdomain` – name does not exist / typo / possibly blocked.
-  - `dns_timeout` – DNS request timed out.
-  - `dns_other_error` – anything else.
+  - `ok`
+  - `dns_temp_failure`  
+    temporary resolver issues (campus DNS flaking).
+  - `dns_nxdomain`  
+    host does not exist / blocked / typo.
+  - `dns_timeout`  
+    resolver did not respond in time.
+  - `dns_other_error`
 
-Patterns that matter:
+**How to read:**
 
-- Many services `ok` but one host shows frequent `dns_temp_failure` or `dns_nxdomain`  
-  → that host might be **blocked or misconfigured**.
-- High `dns_ms` (e.g. >200 ms) across the board while ping is fine  
-  → **slow DNS** making the web feel sluggish.
+- Fast DNS (<50 ms) makes everything *feel* snappy.
+- Slow DNS or frequent `dns_temp_failure` → pages feel sluggish even if ping is fine.
+- `dns_nxdomain` for one service while others are fine → service might be blocked or misconfigured.
 
-Example outcomes:
+---
 
-- *"DNS resolution for Discord is intermittently failing while other sites are fine → likely DNS-based blocking or flaky resolver."*
-- *"Bocconi's DNS is consistently fast (<50 ms) and reliable."*
+### HTTP metrics (from `http_check.py` + `main.py`)
 
-#### HTTP metrics
+Per service (if HTTP enabled):
 
-HTTP probes perform a GET request with `requests`:
+- `latency_ms` (`http_ms`)  
+  Total time for a GET request to complete.
+- `status_code`  
+  200, 301, 404, 503, etc.
+- `status_class` (in `details`)  
+  One of `2xx`, `3xx`, `4xx`, `5xx`, `other`, or `None` when no response.
+- `bytes` (in `details`)  
+  Size of response body in bytes.
+- `redirects` (in `details`)  
+  Number of redirect hops.
+- `error_kind`  
+  Classified HTTP/network errors:
+  - `http_timeout`
+  - `http_ssl_error`
+  - `http_connection_reset`
+  - `http_connection_error`
+  - `http_dns_error`
+  - `http_4xx` / `http_5xx`
+  - `http_other_error`
+- `details` also includes a **per-request throughput estimate**:
 
-- `http_ms`: total time from before the request to response/exception.
-- `status_code`: HTTP status (e.g. 200, 301, 404, 503) or `None` on network failure.
-- `status_class`: derived from status code:
-  - `"2xx"` – success,
-  - `"3xx"` – redirect,
-  - `"4xx"` – client error,
-  - `"5xx"` – server error,
-  - `"other"` – unusual statuses,
-  - `None` – no HTTP response at all.
-- `bytes`: size of the response body in bytes.
-- `redirects`: number of redirects followed.
-- `error_kind`: high-level failure info:
-  - `http_timeout`, `http_ssl_error`, `http_connection_reset`, `http_connection_error`,
-  - `http_dns_error`, `http_4xx`, `http_5xx`, `http_other_status`, `http_other_error`.
+  - `throughput_mbps=<value>`  
+    Computed as:
 
-Useful patterns:
+    ```text
+    throughput_mbps ≈ (bytes * 8 / 1_000_000) / (http_ms / 1000)
+    ```
 
-- `ping` OK, `dns` OK, but HTTP shows `http_5xx` for many services  
-  → servers or upstream providers are having issues.
-- `ping` OK, but HTTP shows `http_dns_error` to one domain  
-  → DNS or censorship problem specific to that domain.
-- `ping` and HTTP high latency to *many* targets at the same time  
-  → ISP or Wi-Fi is congested / unstable.
+    So if we downloaded 200 KB in 100 ms, we’d see ~16 Mbps.
 
-Example outcomes:
+**How to read:**
 
-- *"HTTP to Netflix is fast and returns 2xx → streaming service is reachable and responsive."*
-- *"Discord HTTP requests fail with http_dns_error and ping occasionally sees ping_dns_failure → Discord likely blocked at DNS level on this network."*
-- *"Gateway HTTP times out while Google and YouTube are fast → router is not serving HTTP but internet is otherwise healthy."*
+- If ping & DNS are fine but HTTP `latency_ms` spikes and `throughput_mbps`
+  drops for most services, it suggests congestion or throttling.
+- `http_dns_error` while ping is OK → DNS issues specific to HTTP (resolver, proxy).
+- `http_5xx` → the service itself is unhappy (server-side).
 
+---
 
-### TODO / Future Modes
+## Putting it together: diagnosing “what’s wrong with my internet?”
 
-Introduce multiple **diagnostic modes** on top of the current baseline logger to make NetInsight feel more like a network “lab” than a simple ping script. Planned modes include: 
+Combining the data from:
 
-(1) a **Service Health & Blocked-Site mode** that focuses on a small set of services (e.g. Discord, YouTube, Bocconi, GitHub) and aggressively probes them to answer “is this service actually down globally, or just blocked/broken on my network?”, combining status codes, latency and `error_kind` to distinguish true outages from DNS blocking, connection resets or TLS issues. 
+- long-term baseline data (`netinsight_log.csv`),
+- focused Wi-Fi vs ISP bursts (`netinsight_wifi_diag.csv`),
+- occasional bandwidth snapshots (speedtest),
+- and per-service health snapshots (`netinsight_service_health.csv`),
 
-(2) A **Wi-Fi vs ISP diagnosis mode**, which pings the local gateway and a stable external baseline in high-frequency bursts, logging jitter and packet loss separately for `role=gateway` and `role=external` to infer whether problems come from dorm Wi-Fi congestion or from the wider ISP path. 
+Netinsight can strongly suggest *where* problems are coming from.
 
-(3) A **Speedtest mode**, run on demand, that logs latency, jitter and approximate download throughput to a dedicated CSV, providing a simple “overall connection quality” snapshot. 
+### 1. Wi-Fi / local network problems
 
-(4) A **24/7 Pattern / Time-of-Day mode**, which runs continuously and aggregates metrics per hour and per service (e.g. median latency, jitter, failure rate, quality scores), so we can build heatmaps of “good vs bad hours” in the dorm and quantify how performance changes over the day. 
+**Typical signs:**
 
-(5) An **Incident Capture mode**, where the user can trigger a short high-frequency burst when they feel lag (gaming, Zoom, etc.), tagging all measurements with an `incident_id` and optional note; this creates focused “lag snapshots” that can later be compared to normal periods. 
+- In `wifi_diag`:
+  - `role=gateway`: high jitter and/or high `packet_loss_pct`.
+  - `role=google`: also bad or worse (expected, since everything passes through gateway).
+- In baseline:
+  - Many services have elevated ping jitter/loss at the same times.
+- Speedtest:
+  - May also look unstable or low.
 
-(6) Scenario-specific **Profile modes** (e.g. “Gaming”, “Video Calls”, “Streaming”) that reuse the same probes but summarize them into per-scenario quality scores using different weights and thresholds, so NetInsight can answer questions like “is this dorm Wi-Fi good enough for competitive gaming at 9pm?” rather than just raw latency numbers.
+**Interpretation:**
+
+> Your Wi-Fi / local network is unstable (congestion, weak signal,
+> interference, too many users on the same AP).
+
+---
+
+### 2. ISP / backhaul congestion or throttling
+
+**Typical signs:**
+
+- In `wifi_diag`:
+  - `gateway` metrics are stable (low latency, low jitter, ~0% loss).
+  - `google` shows high jitter/loss or much higher latency.
+- In baseline:
+  - For many services, HTTP `throughput_mbps` drops significantly at certain times
+    (e.g. evenings), even though ping is still OK.
+- In speedtest:
+  - Download/upload Mbps is much lower at busy times than at quiet times
+    (e.g. 2am vs 8pm), or much lower than your contract speed.
+
+**Interpretation:**
+
+> Wi-Fi looks fine, but the ISP / upstream path is congested or limited.
+> This can be oversubscription (too many users), traffic shaping, or poor
+> peering — from your point of view it behaves like “throttling”.
+
+---
+
+### 3. Service-specific blocking or failures (e.g. Discord)
+
+**Typical signs:**
+
+- Baseline:
+  - Most services: good ping, good DNS, OK HTTP, reasonable `throughput_mbps`.
+  - One service (e.g. `discord.com`) shows:
+    - DNS errors: `dns_temp_failure` or `dns_nxdomain`.
+    - HTTP errors: `http_dns_error`, `http_connection_reset`, etc.
+    - Possibly ping failures to that host only.
+- Wi-Fi diag and speedtest:
+  - Look fine.
+
+**Interpretation:**
+
+> Your general internet connection is OK, but this specific service
+> is blocked, filtered, or broken (DNS or connection level), possibly
+> due to firewalling, censorship, or that service’s own problems.
+
+---
+
+### 4. Routing / peering issues (only some services are slow)
+
+**Typical signs:**
+
+- Wi-Fi diag:
+  - Both `gateway` and `google` look fine.
+- Speedtest:
+  - Shows reasonable bandwidth.
+- Baseline:
+  - Some services (e.g. certain streaming platforms or regions) show
+    low `throughput_mbps` and higher latency.
+  - Others stay fast.
+
+**Interpretation:**
+
+> Likely a routing / peering issue: your ISP’s paths to some networks
+> are congested or suboptimal, while others are fine.
+
+---
+
+### 5. Application-level issues
+
+Sometimes the network looks fine but an app still misbehaves:
+
+- NetInsight shows:
+  - good ping/jitter/loss,
+  - good DNS,
+  - decent HTTP throughput,
+  - good speedtest bandwidth.
+- But e.g. Zoom glitches or a game lags only in specific situations.
+
+**Interpretation:**
+
+> The problem may be in the application itself (bugs, overloaded servers,
+> bad config), or in the service’s infrastructure, not your local network
+> or ISP.
+
+NetInsight’s role here is to give you enough **hard data** to say:
+“Look, my Wi-Fi and ISP are healthy; this looks like an app/server issue.”
+
+---
+
+## CLI & usage
+
+### Examples
+
+python3 -m src.cli baseline --once
+python3 -m src.cli wifi-diag --rounds 5
+python3 -m src.cli service-health -n discord.com
+python3 -m src.cli speedtest
 

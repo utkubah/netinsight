@@ -1,0 +1,2 @@
+start_time,end_time,duration_seconds,mean_score,bad_pct,n_samples,num_windows,severity,reason,affected_services_count,top_services_by_bad_pct,top_services_by_count,gateway_involved,diagnosis,mean_score_z,mean_score_delta
+2025-12-19 17:45:00+03:00,2025-12-19 17:50:00+03:00,300.0,56.71,37.78,45,1,1,low_mean,0,,,False,service_specific,-1.31,-0.31

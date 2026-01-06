@@ -1,0 +1,8 @@
+metric,value
+rows_total,3.0
+domains_unique,3.0
+healthy_pct,66.67
+blockedish_pct,33.33
+dns_ok_pct,100.0
+http_ok_pct,66.67
+ping_ok_pct,66.67

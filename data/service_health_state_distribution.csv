@@ -1,0 +1,3 @@
+service_state,count,pct
+healthy,2,66.67
+connection_issue_or_blocked,1,33.33

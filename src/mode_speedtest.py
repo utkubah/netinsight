@@ -1,38 +1,45 @@
 # src/mode_speedtest.py
 """
-Minimal Speedtest mode for NetInsight.
-
-Runs a single speedtest using the `speedtest` Python module (speedtest-cli)
-and prints ping, download and upload speeds.
-
-Usage:
-    python src/mode_speedtest.py
+Small wrapper around speedtest-cli. If the module is missing, logs a helpful message.
 """
 
-import speedtest
+import logging
+from .logging_setup import setup_logging
+
+LOG = logging.getLogger("netinsight.speedtest")
+
+
+def run_speedtest():
+    try:
+        import speedtest
+    except Exception as e:
+        LOG.error("speedtest not available: %s", e)
+        return None
+
+    try:
+        st = speedtest.Speedtest()
+        st.get_best_server()
+        dl = st.download()
+        ul = st.upload()
+        res = st.results.dict()
+        server = res.get("server") or {}
+        ping = res.get("ping")
+        result = {
+            "download_mbps": dl / 1_000_000.0,
+            "upload_mbps": ul / 1_000_000.0,
+            "ping_ms": ping,
+            "server": server,
+        }
+        LOG.info("speedtest: %s", result)
+        return result
+    except Exception as e:
+        LOG.error("speedtest failed: %s", e)
+        return None
 
 
 def main():
-    st = speedtest.Speedtest()
-    st.get_servers()
-    st.get_best_server()
-
-    download_bps = st.download()
-    upload_bps = st.upload()
-    results = st.results.dict()
-
-    server = results.get("server") or {}
-    server_name = server.get("name")
-    server_sponsor = server.get("sponsor")
-    ping_ms = results.get("ping")
-
-    download_mbps = download_bps / 1_000_000.0
-    upload_mbps = upload_bps / 1_000_000.0
-
-    print(f"Speedtest server: {server_name} ({server_sponsor})")
-    print(f"Ping:     {ping_ms:.1f} ms")
-    print(f"Download: {download_mbps:.2f} Mbps")
-    print(f"Upload:   {upload_mbps:.2f} Mbps")
+    setup_logging()
+    run_speedtest()
 
 
 if __name__ == "__main__":

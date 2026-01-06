@@ -1,240 +1,239 @@
 # src/mode_wifi_diag.py
 """
-Wi-Fi vs ISP diagnostic mode for NetInsight.
+Wi-Fi diagnostic: compare gateway vs external host.
 
-This mode runs a short, high-frequency ping test against:
-- a local "gateway" (service named 'gateway' in targets_config.SERVICES)
-- an external baseline "google" (service named 'google' in SERVICES)
+CLI usage:
+  python -m src.mode_wifi_diag --gateway 192.168.1.1 --rounds 3 --interval 1 --log-path data/wifi.csv --rotate
 
-It logs only ping metrics (latency, jitter, packet loss, error_kind) to
-data/netinsight_wifi_diag.csv with mode=wifi_diag.
-
-HOW TO INTERPRET RESULTS (for analysis / summary):
-
-You get rows with:
-  - role = "gateway" or "google"
-  - latency_ms, latency_p95_ms, jitter_ms, packet_loss_pct, error_kind
-
-Heuristics:
-
-1. Likely Wi-Fi / local network problem:
-   - gateway has high jitter (>20–30 ms) and/or packet_loss_pct > ~5%
-   - and google is also bad or worse.
-   => Problem is before leaving your local network (Wi-Fi congestion,
-      interference, too many users, weak signal).
-
-2. Likely ISP / external path problem:
-   - gateway is stable (low latency, low jitter, ~0% loss)
-   - but google shows high latency/jitter/loss.
-   => Wi-Fi is fine; problem is on ISP / upstream / internet side.
-
-3. Wi-Fi congestion vs constant bad Wi-Fi:
-   - Congestion: gateway usually good, but during busy hours you see repeated
-     bursts of bad jitter/loss.
-   - Structural: gateway metrics are consistently bad most of the time.
+Behavior:
+- If --gateway given, it is used and persisted to config/targets.json (via main.persist_gateway).
+- If --gateway not given, it tries net_utils.get_default_gateway_ip() (which checks NETINSIGHT_GATEWAY_IP).
+- If no gateway found, the gateway rows are written with error_kind=config_missing_gateway.
 """
-
-import csv
+import argparse
+import json
+import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 
-import ping_check
-from targets_config import SERVICES
+from .csv_log import make_row, append_rows, utc_now_iso
+from .logging_setup import setup_logging
+from . import ping_check
+from . import net_utils
+from . import targets_config
+from .error_kinds import CONFIG_MISSING_GATEWAY, PING_EXCEPTION
 
-MODE_NAME = "wifi_diag"
+LOG = logging.getLogger("netinsight.wifi_diag")
 LOG_PATH = os.path.join("data", "netinsight_wifi_diag.csv")
 
-ROUNDS = 20           # how many rounds to run
-INTERVAL_SECONDS = 1  # seconds between rounds
-PING_COUNT = 5        # pings per host per round
-PING_TIMEOUT = 1.0    # seconds per ping
 
-CSV_HEADERS = [
-    "timestamp",
-    "mode",
-    "round_id",
-    "role",             # "gateway" or "google"
-    "target",
-    "success",
-    "latency_ms",
-    "latency_p95_ms",
-    "jitter_ms",
-    "packet_loss_pct",
-    "error_kind",
-    "error_message",
-    "details",
-]
+def run_wifi_diag(rounds=10, interval=1.0, gateway_host=None, external_host=None, log_path=None):
+    """
+    Runs the wifi diagnostic and writes rows to log_path. Returns diagnosis string.
+    - rounds: number of samples (small int)
+    - interval: seconds between samples
+    - gateway_host: IP string or None
+    - external_host: external host name or IP (defaults to targets_config.WIFI_DIAG_EXTERNAL_HOST)
+    """
+    if log_path is None:
+        log_path = LOG_PATH
 
+    if external_host is None:
+        external_host = getattr(targets_config, "WIFI_DIAG_EXTERNAL_HOST", "www.google.com")
 
-def main():
-    # Find gateway and google from SERVICES
-    gateway_host = None
-    google_host = None
-
-    for svc in SERVICES:
-        name = svc.get("name")
-        host = svc.get("hostname")
-        if name == "gateway" and host:
-            gateway_host = host
-        if name == "google" and host:
-            google_host = host
-
+    # If gateway_host is None, try auto-detect (net_utils honors NETINSIGHT_GATEWAY_IP env)
     if gateway_host is None:
-        print(
-            "wifi_diag: no 'gateway' service with a hostname found in targets_config.SERVICES.\n"
-            "Please add something like:\n"
-            "  {'name': 'gateway', 'hostname': '192.168.1.1', ...}\n"
-        )
-        return
+        gateway_host = net_utils.get_default_gateway_ip()
 
-    if google_host is None:
-        print(
-            "wifi_diag: no 'google' service with a hostname found in targets_config.SERVICES.\n"
-            "Please add something like:\n"
-            "  {'name': 'google', 'hostname': 'www.google.com', ...}\n"
-        )
-        return
+    round_id = utc_now_iso()
+    LOG.info("wifi_diag: gateway=%s external=%s rounds=%s interval=%s", gateway_host, external_host, rounds, interval)
 
-    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-    file_exists = os.path.exists(LOG_PATH)
+    rows = []
+    gw_lats = []
+    ex_lats = []
+    gw_ok = 0
+    ex_ok = 0
 
-    # simple accumulators for a tiny summary at the end
-    stats = {
-        "gateway": {
-            "latency_sum": 0.0,
-            "latency_count": 0,
-            "jitter_sum": 0.0,
-            "jitter_count": 0,
-            "loss_sum": 0.0,
-            "loss_count": 0,
-        },
-        "google": {
-            "latency_sum": 0.0,
-            "latency_count": 0,
-            "jitter_sum": 0.0,
-            "jitter_count": 0,
-            "loss_sum": 0.0,
-            "loss_count": 0,
-        },
-    }
+    for i in range(rounds):
+        # Gateway probe
+        if gateway_host:
+            try:
+                rgw = ping_check.run_ping(gateway_host, count=1, timeout=1.0)
+            except Exception as e:
+                rgw = {"received": 0, "latency_avg_ms": None, "error_kind": PING_EXCEPTION, "error": str(e)}
+            gw_lats.append(rgw.get("latency_avg_ms"))
+            if rgw.get("received", 0) > 0:
+                gw_ok += 1
 
-    with open(LOG_PATH, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-        if not file_exists:
-            writer.writeheader()
-
-        print(
-            f"NetInsight Wi-Fi diag starting: {ROUNDS} rounds, "
-            f"interval={INTERVAL_SECONDS}s, mode={MODE_NAME}"
-        )
-        print(f"  gateway: {gateway_host}")
-        print(f"  google:  {google_host}")
-
-        for i in range(ROUNDS):
-            round_id = f"{datetime.now(timezone.utc).isoformat()}#wifi_diag#{i}"
-            timestamp = datetime.now(timezone.utc).isoformat()
-
-            for role, host in (("gateway", gateway_host), ("google", google_host)):
-                ping_result = ping_check.run_ping(
-                    host,
-                    count=PING_COUNT,
-                    timeout=PING_TIMEOUT,
+            rows.append(
+                make_row(
+                    mode="wifi_diag",
+                    round_id=round_id,
+                    service_name="gateway",
+                    hostname=gateway_host,
+                    probe_type="ping",
+                    success=(rgw.get("received", 0) > 0),
+                    latency_ms=rgw.get("latency_avg_ms"),
+                    error_kind=rgw.get("error_kind"),
+                    error_message=rgw.get("error") or "",
+                    details=json.dumps({"round": i + 1}, separators=(",", ":"), sort_keys=True),
                 )
+            )
+        else:
+            # explicit missing-gateway row
+            rows.append(
+                make_row(
+                    mode="wifi_diag",
+                    round_id=round_id,
+                    service_name="gateway",
+                    hostname="",
+                    probe_type="ping",
+                    success=False,
+                    error_kind=CONFIG_MISSING_GATEWAY,
+                    error_message="gateway not detected",
+                    details=json.dumps({"round": i + 1}, separators=(",", ":"), sort_keys=True),
+                )
+            )
 
-                row = {key: None for key in CSV_HEADERS}
-                row["timestamp"] = timestamp
-                row["mode"] = MODE_NAME
-                row["round_id"] = round_id
-                row["role"] = role
-                row["target"] = host
-                row["success"] = ping_result.get("received", 0) > 0
-                row["latency_ms"] = ping_result.get("latency_avg_ms")
-                row["latency_p95_ms"] = ping_result.get("latency_p95_ms")
-                row["jitter_ms"] = ping_result.get("jitter_ms")
-                row["packet_loss_pct"] = ping_result.get("packet_loss_pct")
-                row["error_kind"] = ping_result.get("error_kind")
-                row["error_message"] = ping_result.get("error")
+        # External baseline probe
+        try:
+            rex = ping_check.run_ping(external_host, count=1, timeout=1.5)
+        except Exception as e:
+            rex = {"received": 0, "latency_avg_ms": None, "error_kind": PING_EXCEPTION, "error": str(e)}
+        ex_lats.append(rex.get("latency_avg_ms"))
+        if rex.get("received", 0) > 0:
+            ex_ok += 1
 
-                lat_list = ping_result.get("latencies_ms") or []
-                if lat_list:
-                    samples_str = ";".join(f"{x:.2f}" for x in lat_list)
-                    row["details"] = f"samples={samples_str}"
-                else:
-                    row["details"] = ""
+        rows.append(
+            make_row(
+                mode="wifi_diag",
+                round_id=round_id,
+                service_name="external",
+                hostname=external_host,
+                probe_type="ping",
+                success=(rex.get("received", 0) > 0),
+                latency_ms=rex.get("latency_avg_ms"),
+                error_kind=rex.get("error_kind"),
+                error_message=rex.get("error") or "",
+                details=json.dumps({"round": i + 1}, separators=(",", ":"), sort_keys=True),
+            )
+        )
 
-                writer.writerow(row)
+        if interval and interval > 0:
+            time.sleep(interval)
 
-                # update simple stats for summary
-                latency = ping_result.get("latency_avg_ms")
-                jitter = ping_result.get("jitter_ms")
-                loss = ping_result.get("packet_loss_pct")
+    append_rows(log_path, rows)
 
-                if isinstance(latency, (int, float)):
-                    stats[role]["latency_sum"] += latency
-                    stats[role]["latency_count"] += 1
-                if isinstance(jitter, (int, float)):
-                    stats[role]["jitter_sum"] += jitter
-                    stats[role]["jitter_count"] += 1
-                if isinstance(loss, (int, float)):
-                    stats[role]["loss_sum"] += loss
-                    stats[role]["loss_count"] += 1
+    # Compute medians & success rates
+    gw_med = _median([v for v in gw_lats if v is not None])
+    ex_med = _median([v for v in ex_lats if v is not None])
+    gw_rate = gw_ok / rounds if rounds else 0
+    ex_rate = ex_ok / rounds if rounds else 0
 
-            time.sleep(INTERVAL_SECONDS)
+    MIN_GATEWAY_LATENCY_MS = 2.0 #this is selected since in wsl local env ping is too fast
 
-    # tiny summary / quick interpretation
-    def avg(stat_dict, key_sum, key_count):
-        if stat_dict[key_count] > 0:
-            return stat_dict[key_sum] / stat_dict[key_count]
-        return None
+    diagnosis = "Inconclusive or mostly healthy."
 
-    gw_lat = avg(stats["gateway"], "latency_sum", "latency_count")
-    gw_jit = avg(stats["gateway"], "jitter_sum", "jitter_count")
-    gw_loss = avg(stats["gateway"], "loss_sum", "loss_count")
+    # Rate-based hard failures first
+    if gw_rate < 0.6 and ex_rate >= 0.8:
+        diagnosis = "Likely Wi-Fi / local network problem."
 
-    gg_lat = avg(stats["google"], "latency_sum", "latency_count")
-    gg_jit = avg(stats["google"], "jitter_sum", "jitter_count")
-    gg_loss = avg(stats["google"], "loss_sum", "loss_count")
+    elif gw_rate >= 0.8 and ex_rate < 0.6:
+        diagnosis = "Likely ISP / upstream problem."
 
-    print("\nwifi_diag summary (approx):")
-    print(
-        f"  gateway: latency={gw_lat:.1f} ms, jitter={gw_jit:.1f} ms, "
-        f"loss={gw_loss:.1f}%"
-        if gw_lat is not None and gw_jit is not None and gw_loss is not None
-        else "  gateway: not enough data"
-    )
-    print(
-        f"  google:  latency={gg_lat:.1f} ms, jitter={gg_jit:.1f} ms, "
-        f"loss={gg_loss:.1f}%"
-        if gg_lat is not None and gg_jit is not None and gg_loss is not None
-        else "  google:  not enough data"
-    )
-
-    wifi_suspect = False
-    isp_suspect = False
-
-    # Very rough thresholds; the analysis layer can refine these later
-    if gw_jit is not None and gw_loss is not None:
-        if gw_jit > 20.0 or gw_loss > 5.0:
-            wifi_suspect = True
-
-    if (
-        gg_jit is not None
-        and gg_loss is not None
-        and gw_jit is not None
-        and gw_loss is not None
+    # Congestion detection (normalized gateway latency)
+    elif (
+        gw_rate >= 0.8 and
+        ex_rate >= 0.8 and
+        gw_med is not None and
+        ex_med is not None
     ):
-        if (gg_jit > 20.0 or gg_loss > 5.0) and (gw_jit < 10.0 and gw_loss < 2.0):
-            isp_suspect = True
+        # Normalize gateway latency so ratios remain meaningful
+        gw_med_norm = max(gw_med, MIN_GATEWAY_LATENCY_MS)
 
-    if wifi_suspect:
-        print("  → Wi-Fi / local network likely unstable (gateway already looks bad).")
-    elif isp_suspect:
-        print("  → Wi-Fi looks OK; problems likely after the router (ISP / internet).")
+        # ISP congestion: external much slower than gateway
+        if (ex_med / gw_med_norm) >= 4.0:
+            diagnosis = "Likely ISP congestion (external latency >> gateway)."
+
+        # Wi-Fi congestion: gateway much slower than external
+        elif (gw_med_norm / ex_med) >= 4.0:
+            diagnosis = "Likely Wi-Fi congestion (gateway latency >> external)."
+
+
+
+    LOG.info("wifi_diag result: %s", diagnosis)
+    return diagnosis
+
+
+def _median(values):
+    if not values:
+        return None
+    s = sorted(values)
+    n = len(s)
+    m = n // 2
+    if n % 2 == 1:
+        return s[m]
+    return (s[m - 1] + s[m]) / 2.0
+
+
+def _rotate_if_requested(path):
+    if os.path.exists(path):
+        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        new_name = "%s.%s.bak" % (path, ts)
+        os.replace(path, new_name)
+        LOG.info("Rotated existing log %s -> %s", path, new_name)
+        print("Rotated existing log %s -> %s" % (path, new_name))
+
+
+def main(argv=None):
+    """
+    CLI for wifi_diag. argv is optional list for tests; if None argparse reads sys.argv.
+    """
+    setup_logging()
+    p = argparse.ArgumentParser(description="NetInsight wifi_diag mode")
+    p.add_argument("--gateway", default=None, help="Override gateway IP")
+    p.add_argument("--external-host", default=None, help="External host used as baseline")
+    p.add_argument("--rounds", type=int, default=5, help="Number of rounds")
+    p.add_argument("--interval", type=float, default=1.0, help="Seconds between rounds")
+    p.add_argument("--log-path", default=LOG_PATH, help="CSV output path")
+    p.add_argument("--rotate", action="store_true", help="Rotate existing CSV before writing")
+    p.add_argument("--debug", action="store_true", help="Enable debug logging")
+    args = p.parse_args(argv)
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    if args.rotate and os.path.exists(args.log_path):
+        _rotate_if_requested(args.log_path)
+
+    # Decide gateway: CLI override first, else autodetect.
+    gw_used = args.gateway if args.gateway else net_utils.get_default_gateway_ip()
+
+    # If a gateway was chosen, persist it to the JSON config and update in-memory
+    if gw_used:
+        try:
+            # import here to avoid top-level circular imports
+            from . import main as main_mod
+
+            # Default persist behavior will NOT overwrite a non-empty GATEWAY_HOSTNAME.
+            main_mod.persist_gateway(
+                gw_used,
+                targets_file_path=main_mod.DEFAULT_TARGETS_JSON,
+                targets_module=targets_config,
+            )
+        except Exception:
+            LOG.exception("Failed to persist gateway from wifi_diag startup")
     else:
-        print("  → Both paths look mostly healthy or inconclusive in this short run.")
+        LOG.debug(
+            "No gateway detected/override in wifi_diag startup; gateway rows will show config_missing_gateway."
+        )
 
-    print("\nwifi_diag: finished.")
+
+
+    diagnosis = run_wifi_diag(rounds=args.rounds, interval=args.interval, gateway_host=gw_used, external_host=args.external_host, log_path=args.log_path)
+    print("wifi_diag:", diagnosis)
+    return diagnosis
 
 
 if __name__ == "__main__":

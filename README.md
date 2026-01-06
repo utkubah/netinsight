@@ -265,9 +265,12 @@ NetInsight’s role here is to give you enough **hard data** to say:
 
 ---
 
-## Future: one-shot diagnostic workflow (planned)
+## CLI & usage
 
-A future CLI command like:
+### Examples
 
-```bash
-netinsight diag-now
+python3 -m src.cli baseline --once
+python3 -m src.cli wifi-diag --rounds 5
+python3 -m src.cli service-health -n discord.com
+python3 -m src.cli speedtest
+

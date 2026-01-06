@@ -1,11 +1,11 @@
 {
-  "GATEWAY_HOSTNAME": "127.0.1.1",
+  "GATEWAY_HOSTNAME": null,
   "WIFI_DIAG_EXTERNAL_HOST": "www.google.com",
   "WIFI_DIAG_EXTERNAL_URL": "https://www.google.com/generate_204",
   "SERVICES": [
     {
       "name": "gateway",
-      "hostname": "127.0.1.1",
+      "hostname": "",
       "url": "",
       "tags": [
         "gateway",

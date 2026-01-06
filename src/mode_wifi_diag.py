@@ -211,18 +211,24 @@ def main(argv=None):
     gw_used = args.gateway if args.gateway else net_utils.get_default_gateway_ip()
 
     # If a gateway was chosen, persist it to the JSON config and update in-memory
-    gw_used = args.gateway if args.gateway else net_utils.get_default_gateway_ip()
-
     if gw_used:
         try:
             # import here to avoid top-level circular imports
             from . import main as main_mod
-            # persist to the same default JSON used by main and update in-memory targets_config
-            main_mod.persist_gateway(gw_used, targets_file_path=main_mod.DEFAULT_TARGETS_JSON, targets_module=targets_config)
+
+            # Default persist behavior will NOT overwrite a non-empty GATEWAY_HOSTNAME.
+            main_mod.persist_gateway(
+                gw_used,
+                targets_file_path=main_mod.DEFAULT_TARGETS_JSON,
+                targets_module=targets_config,
+            )
         except Exception:
             LOG.exception("Failed to persist gateway from wifi_diag startup")
     else:
-        LOG.debug("No gateway detected/override in wifi_diag startup; gateway rows will show config_missing_gateway.")
+        LOG.debug(
+            "No gateway detected/override in wifi_diag startup; gateway rows will show config_missing_gateway."
+        )
+
 
 
     diagnosis = run_wifi_diag(rounds=args.rounds, interval=args.interval, gateway_host=gw_used, external_host=args.external_host, log_path=args.log_path)

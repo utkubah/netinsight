@@ -16,6 +16,7 @@ from . import main as baseline_main
 from . import mode_wifi_diag
 from . import mode_service_health
 from . import mode_speedtest
+from . import analyze as analyze_runner
 
 def build_parser():
     p = argparse.ArgumentParser(prog="netinsight")
@@ -24,6 +25,12 @@ def build_parser():
     b = sub.add_parser("baseline")
     b.add_argument("--once", action="store_true")
     b.add_argument("--log", default=baseline_main.LOG_PATH)
+    a = sub.add_parser("analyze")
+    a.add_argument(
+        "target",
+        choices=["baseline", "wifi-diag", "service-health", "speedtest", "all"],
+    )
+
 
     w = sub.add_parser("wifi-diag")
     w.add_argument("--rounds", type=int, default=10)
@@ -62,6 +69,9 @@ def main(argv=None):
 
     elif args.cmd == "speedtest":
         mode_speedtest.run_speedtest()
+        
+    elif args.cmd == "analyze":
+        analyze_runner.run(args.target)
 
 if __name__ == "__main__":
     main()

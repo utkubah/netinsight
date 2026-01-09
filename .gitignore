@@ -17,3 +17,31 @@ venv/
 data/*.csv
 data/*.log
 data/*.json
+cat >> .gitignore <<'EOF'
+
+# --- NetInsight generated outputs (do not commit) ---
+data/netinsight_log.csv
+data/netinsight_wifi_diag.csv
+data/netinsight_service_health.csv
+data/netinsight_service_health_old.csv
+data/netinsight_speedtest.csv
+
+data/quality_rows.csv
+data/quality_hourly.csv
+data/quality_by_service.csv
+data/bad_intervals.csv
+data/downtimes.csv
+data/total_downtime.csv
+data/hourly_stats.csv
+
+data/wifi_diag_summary.csv
+data/wifi_diag_windows.csv
+
+data/service_health_summary.csv
+data/service_health_state_distribution.csv
+data/service_health_by_domain.csv
+data/service_health_recent.csv
+
+data/speedtest_summary.csv
+data/speedtest_hourly.csv
+EOF

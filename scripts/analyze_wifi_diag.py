@@ -85,7 +85,6 @@ def main() -> None:
 
     df = pd.read_csv(IN_PATH)
 
-    # Columns vary across iterations; we accept multiple schemas.
     ts_col = _pick_col(df, ["timestamp", "time", "ts"])
     round_col = _pick_col(df, ["round_id", "round", "run_id"])
     role_col = _pick_col(df, ["service_name", "role", "target", "name"])
@@ -98,15 +97,13 @@ def main() -> None:
         print(f"Columns: {list(df.columns)}")
         return
 
-    # Filter to ping rows if probe column exists
     if probe_col is not None:
         df = df[df[probe_col].astype(str).str.lower().eq("ping")].copy()
 
-    # Timestamp parse
+    # Timestamp parse 
     if ts_col is not None:
         df[ts_col] = ensure_tz(df[ts_col])
 
-    # Normalize role names to "gateway" and "external"
     df[role_col] = df[role_col].astype(str).str.strip().str.lower()
     df[role_col] = df[role_col].replace(
         {
@@ -123,13 +120,11 @@ def main() -> None:
         # fallback: success if latency exists
         df["_success"] = True
 
-    # Latency numeric (optional but needed for useful summary)
     if lat_col is not None:
         df["_lat"] = pd.to_numeric(df[lat_col], errors="coerce")
     else:
         df["_lat"] = pd.Series([None] * len(df))
 
-    # Error kind (optional)
     err_col = _pick_col(df, ["error_kind", "error", "error_message"])
     if err_col is not None:
         df["_err"] = df[err_col].fillna("").astype(str)
@@ -143,7 +138,6 @@ def main() -> None:
         return
 
     windows = []
-    # Group by run/window and role
     for (rid, role), g in df.groupby([round_col, role_col], dropna=True):
         total = int(len(g))
         ok_n = int(g["_success"].sum())

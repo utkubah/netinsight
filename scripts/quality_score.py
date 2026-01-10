@@ -23,7 +23,7 @@ OUT_ROWS_PATH = Path("data") / "quality_rows.csv"
 OUT_HOURLY_PATH = Path("data") / "quality_hourly.csv"
 OUT_SERVICE_PATH = Path("data") / "quality_by_service.csv"
 
-TIMEZONE = "Europe/Istanbul"
+TIMEZONE = "Europe/Rome"
 
 # If the log has a 'mode' column (Utku's changes), we score only baseline by default
 BASELINE_MODE_NAME = "baseline"

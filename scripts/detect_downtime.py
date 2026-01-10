@@ -28,7 +28,7 @@ OUTPUT_TOTALS = Path("data") / "total_downtime.csv"
 MIN_CONSEC_FAILURES = 3
 MAX_GAP_SECONDS = 90
 PROBE_TYPE = "ping"
-TIMEZONE = "Europe/Istanbul"
+TIMEZONE = "Europe/Rome"
 
 
 def parse_timestamp(ts: pd.Series) -> pd.Series:

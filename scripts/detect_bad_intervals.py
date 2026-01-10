@@ -35,7 +35,7 @@ import pandas as pd
 IN_PATH = Path("data") / "quality_rows.csv"
 OUT_PATH = Path("data") / "bad_intervals.csv"
 
-TIMEZONE = "Europe/Istanbul"
+TIMEZONE = "Europe/Rome"
 
 WINDOW_MINUTES = 5
 STEP_MINUTES = 1

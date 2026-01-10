@@ -62,7 +62,7 @@ def test_persist_gateway_overwrites_when_forced(tmp_path):
         encoding="utf-8",
     )
 
-    ok = persist_gateway("10.0.0.2", targets_file_path=str(cfg), targets_module=None, overwrite=True)
+    ok = persist_gateway("10.0.0.2", targets_file_path=str(cfg), targets_module=None, overwrite=True, write_file=True)
     assert ok is True
 
     data = _read_json(cfg)
@@ -88,7 +88,7 @@ def test_persist_gateway_sets_gateway_when_missing(tmp_path):
         encoding="utf-8",
     )
 
-    ok = persist_gateway("192.168.1.1", targets_file_path=str(cfg), targets_module=None, overwrite=False)
+    ok = persist_gateway("192.168.1.1", targets_file_path=str(cfg), targets_module=None, overwrite=False, write_file=True)
     assert ok is True
 
     data = _read_json(cfg)
@@ -112,7 +112,7 @@ def test_persist_gateway_does_not_override_service_hostname(tmp_path):
         encoding="utf-8",
     )
 
-    ok = persist_gateway("9.9.9.9", targets_file_path=str(cfg), targets_module=None, overwrite=False)
+    ok = persist_gateway("9.9.9.9", targets_file_path=str(cfg), targets_module=None, overwrite=False, write_file=True)
     assert ok is True
 
     data = _read_json(cfg)

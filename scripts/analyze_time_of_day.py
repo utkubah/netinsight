@@ -16,7 +16,7 @@ import pandas as pd
 
 LOG_PATH = Path("data") / "netinsight_log.csv"
 OUT_PATH = Path("data") / "hourly_stats.csv"
-TIMEZONE = "Europe/Istanbul"
+TIMEZONE = "Europe/Rome"
 
 
 def parse_timestamp(ts: pd.Series) -> pd.Series:

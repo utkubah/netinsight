@@ -23,7 +23,7 @@ OUT_SUMMARY = Path("data") / "wifi_diag_summary.csv"
 OUT_WINDOWS = Path("data") / "wifi_diag_windows.csv"
 
 # Keep consistent with other scripts in this repo (they used Istanbul in earlier analyzers)
-TIMEZONE = "Europe/Istanbul"
+TIMEZONE = "Europe/Rome"
 
 
 def ensure_tz(ts: pd.Series) -> pd.Series:

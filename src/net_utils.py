@@ -1,17 +1,18 @@
-# src/net_utils.py
 """
-Simple, robust default gateway detection (no walrus operator).
+src/net_utils.py
 
-Order:
- 1) NETINSIGHT_GATEWAY_IP env var
- 2) If WSL: prefer 127.0.1.1 then 127.0.0.1 when present
- 3) /proc/net/route (kernel default route)
- 4) `ip route get 1.1.1.1` -> take 'via <ip>' if present
- 5) `ip route show default` -> take 'default via <ip>'
- 6) `route -n` fallback
- 7) None if nothing found
+Cross-platform default gateway detection.
 
-This is simple and deterministic, designed to be easy to debug on WSL.
+Order of checks:
+ 1) NETINSIGHT_GATEWAY_IP env var (explicit override)
+ 2) If WSL: prefer 127.0.1.1 then 127.0.0.1 when present (helps WSL loopback envs)
+ 3) macOS: `route get default` -> `netstat -rn`
+ 4) Linux kernel default: /proc/net/route
+ 5) `ip route get 1.1.1.1` -> take 'via <ip>' if present
+ 6) `ip route show default` -> take 'default via <ip>'
+ 7) `route -n` fallback
+ 8) Windows: `route print -4` parsing
+ 9) None if nothing found
 """
 import os
 import platform
@@ -25,6 +26,7 @@ LOG = logging.getLogger("netinsight.net_utils")
 
 def _is_wsl():
     try:
+        # check /proc/version and /proc/sys/kernel/osrelease for WSL marker
         if os.path.exists("/proc/version"):
             with open("/proc/version", "r", encoding="utf-8") as f:
                 v = f.read().lower()
@@ -109,7 +111,6 @@ def _parse_ip_route_get_via():
         line = line.strip()
         if " via " in line:
             parts = line.split()
-            # find token after 'via'
             try:
                 idx = parts.index("via")
                 candidate = parts[idx + 1]
@@ -161,11 +162,85 @@ def _parse_route_n():
     return None
 
 
+def _parse_darwin_route_get_default():
+    """
+    macOS: parse `route get default` output for a 'gateway: <ip>' line.
+    Example output lines:
+        gateway: 192.168.1.1
+    """
+    try:
+        out = subprocess.check_output(["route", "get", "default"], stderr=subprocess.STDOUT, text=True)
+    except Exception:
+        return None
+
+    for line in out.splitlines():
+        line = line.strip()
+        # "gateway: 192.168.1.1"
+        if line.startswith("gateway:"):
+            parts = line.split()
+            if len(parts) >= 2:
+                candidate = parts[1]
+                if candidate.count(".") == 3 and candidate != "0.0.0.0":
+                    return candidate
+    return None
+
+
+def _parse_darwin_netstat_default():
+    """
+    Fallback: parse `netstat -rn` for a 'default' row.
+    On macOS netstat -rn typically contains a line like:
+      default            192.168.1.1        UGSc           en0
+    """
+    try:
+        out = subprocess.check_output(["netstat", "-rn"], stderr=subprocess.STDOUT, text=True)
+    except Exception:
+        return None
+
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith("internet") or low.startswith("destination") or low.startswith("kernel"):
+            continue
+        cols = line.split()
+        # Expect 'default <gateway> ...'
+        if cols and cols[0] == "default" and len(cols) >= 2:
+            candidate = cols[1]
+            if candidate.count(".") == 3 and candidate != "0.0.0.0":
+                return candidate
+    return None
+
+
+def _parse_windows_route_print():
+    """
+    Parse Windows `route print -4` output to find the default gateway.
+    We look for a line with '0.0.0.0 0.0.0.0 <gateway> ...'.
+    """
+    try:
+        out = subprocess.check_output(["route", "print", "-4"], stderr=subprocess.STDOUT, text=True)
+    except Exception:
+        return None
+
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        # We expect lines containing numeric IP tokens.
+        # Find a line where the first two tokens are 0.0.0.0 (destination, netmask)
+        # and the third token is a dotted gateway IP.
+        if len(parts) >= 3:
+            if parts[0] == "0.0.0.0" and parts[1] == "0.0.0.0":
+                candidate = parts[2]
+                if candidate.count(".") == 3 and candidate != "0.0.0.0":
+                    return candidate
+    return None
+
+
 def get_default_gateway_ip():
     """
-    Return the default gateway IP or None.
-    Simple, deterministic logic suitable for WSL: prefer kernel default,
-    but in WSL prefer loopback candidates if present.
+    Return the default gateway IP (IPv4 dotted string) or None if not found.
     """
     # 1) Env override
     env = os.environ.get("NETINSIGHT_GATEWAY_IP")
@@ -173,9 +248,11 @@ def get_default_gateway_ip():
         LOG.debug("Using NETINSIGHT_GATEWAY_IP=%s", env)
         return env.strip()
 
-    # 2) WSL loopback preference
+    system = platform.system().lower()
+
+    # 2) WSL loopback preference (only on Linux/WSL)
     try:
-        if _is_wsl():
+        if system.startswith("linux") and _is_wsl():
             for cand in ("127.0.1.1", "127.0.0.1"):
                 if _loopback_candidate_present(cand):
                     LOG.debug("WSL detected - using loopback candidate: %s", cand)
@@ -183,7 +260,17 @@ def get_default_gateway_ip():
     except Exception:
         LOG.debug("WSL detection failed", exc_info=True)
 
-    # 3) /proc/net/route (kernel default route) - authoritative when present
+    # 3) macOS detection
+    try:
+        if system.startswith("darwin"):
+            gw = _parse_darwin_route_get_default() or _parse_darwin_netstat_default()
+            if gw:
+                LOG.debug("macOS default gateway candidate: %s", gw)
+                return gw
+    except Exception:
+        LOG.debug("macOS gateway detection failed", exc_info=True)
+
+    # 4) /proc/net/route (Linux kernel default route)
     try:
         gw = _parse_proc_net_route()
         if gw:
@@ -192,24 +279,42 @@ def get_default_gateway_ip():
     except Exception:
         LOG.debug("Reading /proc/net/route failed", exc_info=True)
 
-    # 4) ip route get via
-    gw = _parse_ip_route_get_via()
-    if gw:
-        LOG.debug("'ip route get' via candidate: %s", gw)
-        return gw
+    # 5) ip route get via
+    try:
+        gw = _parse_ip_route_get_via()
+        if gw:
+            LOG.debug("'ip route get' via candidate: %s", gw)
+            return gw
+    except Exception:
+        LOG.debug("'ip route get' failed", exc_info=True)
 
-    # 5) ip route show default
-    gw = _parse_ip_route_default()
-    if gw:
-        LOG.debug("'ip route show default' candidate: %s", gw)
-        return gw
+    # 6) ip route show default
+    try:
+        gw = _parse_ip_route_default()
+        if gw:
+            LOG.debug("'ip route show default' candidate: %s", gw)
+            return gw
+    except Exception:
+        LOG.debug("'ip route show default' failed", exc_info=True)
 
-    # 6) route -n fallback
-    gw = _parse_route_n()
-    if gw:
-        LOG.debug("'route -n' candidate: %s", gw)
-        return gw
+    # 7) route -n fallback (Linux)
+    try:
+        gw = _parse_route_n()
+        if gw:
+            LOG.debug("'route -n' candidate: %s", gw)
+            return gw
+    except Exception:
+        LOG.debug("'route -n' failed", exc_info=True)
 
-    # 7) not found
+    # 8) Windows route print
+    try:
+        if system.startswith("win"):
+            gw = _parse_windows_route_print()
+            if gw:
+                LOG.debug("Windows default gateway candidate: %s", gw)
+                return gw
+    except Exception:
+        LOG.debug("Windows gateway detection failed", exc_info=True)
+
     LOG.debug("No default gateway detected")
     return None

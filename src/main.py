@@ -31,76 +31,69 @@ LOG_PATH = "data/netinsight_log.csv"
 DEFAULT_TARGETS_JSON = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "config", "targets.json"))
 
 
-def persist_gateway(gateway_ip, targets_file_path=None, targets_module=None, overwrite=False, write_file=False):
+def persist_gateway(gateway_ip, targets_file_path=None, targets_module=None, overwrite=False):
     """
-    Persist gateway_ip into targets.json (atomic write) with safety rules:
+    Minimal, safe persist of the gateway IP.
 
-    - If file has an existing non-empty GATEWAY_HOSTNAME and overwrite=False:
-        do NOT change the file (and optionally sync in-memory module to the existing value).
-    - Do NOT overwrite per-service hostnames; only fill empty hostname for services tagged "gateway".
-    - Do NOT add/normalize unrelated keys (e.g., do not inject SERVICES if missing).
-    - Only rewrite the file if the underlying dict actually changes (semantic compare),
-      so formatting differences won't trigger rewrites.
-    - If write_file=False, never touch the file (only update in-memory module if provided).
-
-    Returns True on success, False on failure.
+    Behavior:
+      - If the on-disk JSON has a non-empty GATEWAY_HOSTNAME and overwrite is False,
+        do NOT change the file; update only the in-memory module (if provided) and return True.
+      - Otherwise set GATEWAY_HOSTNAME to gateway_ip (or None when gateway_ip falsy).
+      - Only populate a service["hostname"] for services already present in the JSON
+        when they have the "gateway" tag *and* their hostname is empty.
+      - Only rewrite the file (atomically) if the JSON dict actually changes.
+      - Always try to update `targets_module` in memory if provided.
     """
-    import copy
     import json
-    import logging
     import os
     import tempfile
+    import logging
 
     LOG = logging.getLogger("netinsight.persist_gateway")
 
     if targets_file_path is None:
-        targets_file_path = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "config", "targets.json")
-        )
+        targets_file_path = DEFAULT_TARGETS_JSON
 
     try:
-        # Load existing config (if present)
-        data = {}
+        # Load existing dict if possible; if parse fails we treat as empty dict.
+        original = {}
         if os.path.exists(targets_file_path):
             try:
                 with open(targets_file_path, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
                     if isinstance(loaded, dict):
-                        data = loaded
+                        original = loaded
             except Exception:
-                data = {}
+                # invalid JSON or unreadable: treat as empty so we will write new JSON
+                original = {}
 
-        original = copy.deepcopy(data)
+        # Work on a shallow copy
+        data = dict(original)
 
         existing_gw = data.get("GATEWAY_HOSTNAME")
 
-        # If there's an existing non-empty gateway and we're not allowed to overwrite it,
-        # do not modify the file at all.
+        # If an existing non-empty gateway exists and we are not allowed to overwrite, do nothing to file.
         if existing_gw and not overwrite and (gateway_ip is not None) and existing_gw != gateway_ip:
-            LOG.info(
-                "Not overwriting existing GATEWAY_HOSTNAME=%s in %s",
-                existing_gw,
-                targets_file_path,
-            )
-            # Optionally sync in-memory module to existing gateway
+            LOG.info("persist_gateway: existing GATEWAY_HOSTNAME=%s; not overwriting %s", existing_gw, targets_file_path)
+            # Sync in-memory module (best-effort) and return
             if targets_module is not None:
                 try:
                     targets_module.GATEWAY_HOSTNAME = existing_gw
-                    for svc in getattr(targets_module, "SERVICES", []):
-                        tags = svc.get("tags", []) or []
-                        if "gateway" in tags and not svc.get("hostname"):
-                            svc["hostname"] = existing_gw or ""
+                    services_mod = getattr(targets_module, "SERVICES", None)
+                    if isinstance(services_mod, list):
+                        for svc in services_mod:
+                            tags = svc.get("tags", []) or []
+                            if "gateway" in tags and not svc.get("hostname"):
+                                svc["hostname"] = existing_gw or ""
                 except Exception:
-                    LOG.exception("Failed to update targets_module from existing gateway")
+                    LOG.exception("persist_gateway: failed to update targets_module from existing gateway")
             return True
 
-        # Apply updates (minimal surface area)
+        # Apply desired gateway value
         desired_gw = gateway_ip if gateway_ip else None
+        data["GATEWAY_HOSTNAME"] = desired_gw
 
-        if data.get("GATEWAY_HOSTNAME") != desired_gw:
-            data["GATEWAY_HOSTNAME"] = desired_gw
-
-        # Only touch SERVICES if it already exists as a list in the file
+        # Only touch SERVICES if they exist in the file and are a list.
         services = data.get("SERVICES")
         if isinstance(services, list):
             for svc in services:
@@ -108,42 +101,29 @@ def persist_gateway(gateway_ip, targets_file_path=None, targets_module=None, ove
                     continue
                 tags = svc.get("tags", []) or []
                 if "gateway" in tags:
-                    # Only fill if empty; never override explicit hostname
+                    # Populate empty hostname only; do not override explicit hostnames.
                     if not svc.get("hostname"):
                         svc["hostname"] = desired_gw or ""
 
-        # If nothing changed semantically, do not write (avoids “format overwrite”)
+        # If nothing changed (semantic equality), update in-memory module and return
         if data == original:
-            LOG.debug("persist_gateway: no semantic changes; not rewriting %s", targets_file_path)
-            # Still sync in-memory module (best-effort)
+            LOG.debug("persist_gateway: semantic no-op; not rewriting %s", targets_file_path)
             if targets_module is not None:
                 try:
                     targets_module.GATEWAY_HOSTNAME = data.get("GATEWAY_HOSTNAME")
-                    for svc in getattr(targets_module, "SERVICES", []):
-                        tags = svc.get("tags", []) or []
-                        if "gateway" in tags and not svc.get("hostname"):
-                            svc["hostname"] = data.get("GATEWAY_HOSTNAME") or ""
+                    services_mod = getattr(targets_module, "SERVICES", None)
+                    if isinstance(services_mod, list):
+                        for svc in services_mod:
+                            tags = svc.get("tags", []) or []
+                            if "gateway" in tags and not svc.get("hostname"):
+                                svc["hostname"] = data.get("GATEWAY_HOSTNAME") or ""
                 except Exception:
-                    LOG.exception("Failed to update targets_module on no-op persist")
+                    LOG.exception("persist_gateway: failed to update targets_module on no-op")
             return True
 
-        # If writing is disabled, stop here (we intentionally do not touch the file)
-        if not write_file:
-            LOG.info("persist_gateway: write_file=False; not writing %s", targets_file_path)
-            if targets_module is not None:
-                try:
-                    targets_module.GATEWAY_HOSTNAME = data.get("GATEWAY_HOSTNAME")
-                    for svc in getattr(targets_module, "SERVICES", []):
-                        tags = svc.get("tags", []) or []
-                        if "gateway" in tags and not svc.get("hostname"):
-                            svc["hostname"] = data.get("GATEWAY_HOSTNAME") or ""
-                except Exception:
-                    LOG.exception("Failed to update targets_module when write_file=False")
-            return True
-
-        # Atomic write
+        # Otherwise write atomically
         target_dir = os.path.dirname(targets_file_path)
-        if target_dir:
+        if target_dir and not os.path.exists(target_dir):
             os.makedirs(target_dir, exist_ok=True)
 
         fd, tmpname = tempfile.mkstemp(prefix="targets.", suffix=".tmp", dir=target_dir or ".")
@@ -159,26 +139,30 @@ def persist_gateway(gateway_ip, targets_file_path=None, targets_module=None, ove
                 if os.path.exists(tmpname):
                     os.remove(tmpname)
             except Exception:
+                # best-effort cleanup
                 pass
 
-        LOG.info("Persisted gateway=%s into %s", desired_gw, targets_file_path)
+        LOG.info("persist_gateway: wrote GATEWAY_HOSTNAME=%s to %s", desired_gw, targets_file_path)
 
-        # Update in-memory module
+        # Update in-memory module if provided
         if targets_module is not None:
             try:
                 targets_module.GATEWAY_HOSTNAME = data.get("GATEWAY_HOSTNAME")
-                for svc in getattr(targets_module, "SERVICES", []):
-                    tags = svc.get("tags", []) or []
-                    if "gateway" in tags and not svc.get("hostname"):
-                        svc["hostname"] = data.get("GATEWAY_HOSTNAME") or ""
+                services_mod = getattr(targets_module, "SERVICES", None)
+                if isinstance(services_mod, list):
+                    for svc in services_mod:
+                        tags = svc.get("tags", []) or []
+                        if "gateway" in tags and not svc.get("hostname"):
+                            svc["hostname"] = data.get("GATEWAY_HOSTNAME") or ""
             except Exception:
-                LOG.exception("Failed to update targets_module after writing file")
+                LOG.exception("persist_gateway: failed to update targets_module after write")
 
         return True
 
     except Exception:
-        LOG.exception("Failed to persist gateway to %s", targets_file_path)
+        LOG.exception("persist_gateway: unexpected error while persisting gateway")
         return False
+
 
 
 

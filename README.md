@@ -1,7 +1,5 @@
 # NetInsight
 
-
-
 NetInsight is a compact Python tool to monitor and analyze internet connection quality, built with a focus on unstable student Wi-Fi (e.g., dorm networks). Instead of only printing raw ping output, NetInsight records structured probe data (ping, DNS, HTTP and occasional bandwidth tests), computes reproducible quality metrics and statistical diagnostics, and produces human-readable reports.
 
 ---
@@ -115,7 +113,7 @@ python3 -m src.cli service-health -n discord.com
 # Speedtest
 python3 -m src.cli speedtest
 
-# Run analyzers
+# Run analyzers (diagnostics needs to be called before)
 python3 -m src.cli analyze baseline
 python3 -m src.cli analyze all
 

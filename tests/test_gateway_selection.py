@@ -1,4 +1,3 @@
-# tests/test_gateway_selection.py
 import json
 import os
 import shutil

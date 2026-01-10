@@ -30,7 +30,7 @@ LOG = logging.getLogger("netinsight.cli")
 
 def build_parser():
     p = argparse.ArgumentParser(prog="netinsight")
-    # We accept no subcommand (len(argv) == 0 will run baseline_main.main()).
+    # (len(argv) == 0 will run baseline_main.main()).
     sub = p.add_subparsers(dest="cmd")
 
     # baseline
@@ -81,7 +81,7 @@ def build_parser():
     return p
 
 
-def clean_data_dir(data_dir="data", pattern="*.csv", yes=False, dry_run=False, verbose=False):
+def clean_data_dir(data_dir="data", pattern="*.csv", yes=False, verbose=False):
     """
     Delete files matching pattern in data_dir.
 
@@ -92,7 +92,6 @@ def clean_data_dir(data_dir="data", pattern="*.csv", yes=False, dry_run=False, v
         print(f"No data directory found at {p}")
         return 0
 
-    # Non-recursive by default (use rglob if you want recursive)
     files = sorted([f for f in p.glob(pattern) if f.is_file()])
 
     if not files:
@@ -103,9 +102,6 @@ def clean_data_dir(data_dir="data", pattern="*.csv", yes=False, dry_run=False, v
     for f in files:
         print("  " + str(f))
 
-    if dry_run:
-        print("Dry-run: no files will be deleted.")
-        return len(files)
 
     if not yes:
         try:
@@ -179,7 +175,6 @@ def main(argv=None):
             data_dir=args.data_dir,
             pattern=args.pattern,
             yes=args.yes,
-            dry_run=args.dry_run,
             verbose=args.verbose,
         )
 

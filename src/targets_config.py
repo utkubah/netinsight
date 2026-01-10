@@ -1,4 +1,3 @@
-# src/targets_config.py
 """
 Thin loader that exposes configuration from config/targets.json.
 

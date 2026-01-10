@@ -1,4 +1,3 @@
-# tests/test_dns_check.py
 import socket
 import pytest
 

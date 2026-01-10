@@ -1,4 +1,3 @@
-# src/dns_check.py
 """
 Simple DNS probe using socket.gethostbyname and a short timeout.
 """

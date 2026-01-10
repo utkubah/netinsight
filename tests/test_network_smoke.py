@@ -1,4 +1,3 @@
-# tests/test_network_smoke.py
 import os
 import pytest
 

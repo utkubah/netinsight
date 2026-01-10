@@ -1,4 +1,3 @@
-# scripts/analyze_speedtest.py
 """
 NetInsight - Speedtest Analysis
 
@@ -32,7 +31,7 @@ def ensure_tz(ts: pd.Series) -> pd.Series:
     return d.dt.tz_convert(TIMEZONE)
 
 
-def main() -> None:
+def main():
     if not IN_PATH.exists():
         print(f"[speedtest] no input yet: {IN_PATH} (run: python3 -m src.cli speedtest)")
         return

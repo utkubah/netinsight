@@ -1,4 +1,3 @@
-# tests/test_main_offline.py
 import csv
 from pathlib import Path
 

@@ -1,4 +1,3 @@
-# src/csv_log.py
 import csv
 import os
 from datetime import datetime, timezone

@@ -1,4 +1,3 @@
-# tests/test_http_check.py
 import pytest
 import requests
 

@@ -1,4 +1,3 @@
-# src/http_check.py
 """
 Simple HTTP probe using requests.
 """

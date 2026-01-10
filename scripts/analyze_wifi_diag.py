@@ -1,4 +1,3 @@
-# scripts/analyze_wifi_diag.py
 """
 NetInsight - Wi-Fi diag analysis (robust)
 
@@ -12,8 +11,6 @@ Writes:
 Run:
   python3 scripts/analyze_wifi_diag.py
 """
-
-from __future__ import annotations
 
 from pathlib import Path
 import pandas as pd
@@ -77,7 +74,7 @@ def _fmt_last(role: str, ok: bool, lat: float | None, jit: float | None, loss: f
     return f"{role}: {status} lat={lat_s} jit={jit_s} loss={loss_s}"
 
 
-def main() -> None:
+def main():
     if not IN_PATH.exists():
         print("wifi_diag: input missing. Run:")
         print("  python3 -m src.cli wifi-diag --rounds 5")
@@ -243,7 +240,7 @@ def main() -> None:
     summary = {
         "diagnosis": diagnosis,
         "gateway_last": gateway_last,
-        "google_last": external_last,  # keep field name compatible with your report.py
+        "google_last": external_last,  
         "total_windows": int(win_df["round_id"].nunique()),
     }
     pd.DataFrame([summary]).to_csv(OUT_SUMMARY, index=False)

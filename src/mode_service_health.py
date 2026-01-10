@@ -1,4 +1,3 @@
-# src/mode_service_health.py
 """
 Service health: ping + dns + http for a single domain.
 Provides classify_service_state() and run_service_health().

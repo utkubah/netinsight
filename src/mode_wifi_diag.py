@@ -1,4 +1,3 @@
-# src/mode_wifi_diag.py
 """
 Wi-Fi diagnostic: compare gateway vs external host.
 
@@ -131,7 +130,7 @@ def run_wifi_diag(rounds=10, interval=1.0, gateway_host=None, external_host=None
     gw_rate = gw_ok / rounds if rounds else 0
     ex_rate = ex_ok / rounds if rounds else 0
 
-    MIN_GATEWAY_LATENCY_MS = 2.0 #this is selected since in wsl local env ping is too fast
+    MIN_GATEWAY_LATENCY_MS = 2.0 #this is selected since in wsl local env ping is too fast, might be tweaked
 
     diagnosis = "Inconclusive or mostly healthy."
 
@@ -214,10 +213,10 @@ def main(argv=None):
     if gw_used:
         try:
             # import here to avoid top-level circular imports
-            from . import main as main_mod
+            from . import main
 
             # Default persist behavior will NOT overwrite a non-empty GATEWAY_HOSTNAME.
-            main_mod.persist_gateway(
+            main.persist_gateway(
                 gw_used,
                 targets_file_path=main_mod.DEFAULT_TARGETS_JSON,
                 targets_module=targets_config,

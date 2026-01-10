@@ -292,7 +292,7 @@ def add_diagnosis(intervals: pd.DataFrame) -> pd.DataFrame:
     return intervals
 
 
-def main() -> None:
+def main():
     if not IN_PATH.exists():
         raise FileNotFoundError(f"Input not found: {IN_PATH}. Run scripts/quality_score.py first.")
 

@@ -2,6 +2,8 @@
 """
 Speedtest mode for NetInsight.
 
+Uses speedtest-cli, might encounter errors because of the library
+
 Runs one speedtest (ping + download/upload Mbps) and appends a row to:
   data/netinsight_speedtest.csv
 
@@ -12,6 +14,7 @@ import csv
 import logging
 import os
 from datetime import datetime, timezone
+import speedtest
 
 from .logging_setup import setup_logging
 
@@ -96,14 +99,6 @@ def run_speedtest(log_path: str = LOG_PATH):
         "error": "",
     }
 
-    try:
-        import speedtest # from speedtest-cli package
-    except Exception as e:
-        msg = f"speedtest import failed: {e}"
-        row["error"] = msg
-        _append_row(log_path, row)
-        LOG.error(msg)
-        return None
 
     try:
         st = speedtest.Speedtest()

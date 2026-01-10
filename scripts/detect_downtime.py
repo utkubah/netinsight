@@ -112,7 +112,6 @@ def detect_downtimes_for_service(df: pd.DataFrame, service: str) -> List[Dict]:
             last_failure_ts = None
             fail_count = 0
 
-    # sayfasonu close
     if current_start is not None and last_failure_ts is not None and fail_count >= MIN_CONSEC_FAILURES:
         events.append(
             {
@@ -161,7 +160,7 @@ def compute_total_downtime(events: pd.DataFrame) -> pd.DataFrame:
     return totals
 
 
-def main() -> None:
+def main():
     df = load_log()
     events = detect_all_downtimes(df)
     events.to_csv(OUTPUT_EVENTS, index=False)

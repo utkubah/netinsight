@@ -27,7 +27,6 @@ TIMEZONE = "Europe/Rome"
 
 BASELINE_MODE_NAME = "baseline"
 
-
 def clamp(x: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, x))
 

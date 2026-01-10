@@ -1,4 +1,3 @@
-# tests/test_service_health.py
 import pytest
 
 from src.mode_service_health import classify_service_state

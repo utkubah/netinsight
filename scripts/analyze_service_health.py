@@ -1,18 +1,9 @@
-#!/usr/bin/env python3
 """
-NetInsight - Service Health Analysis (schema-flex)
+NetInsight - Service Health Analysis 
 
-Supports BOTH schemas:
-1) Old schema (your early version):
-   columns like ping_ok,dns_ok,http_ok,service_state,service_reason,...
-
-2) New unified schema (current main):
-   columns like timestamp,mode,round_id,service_name,...,status_code,error_kind,details(JSON)
-   where details includes nested ping/dns/http + "state".
 
 Reads:
   data/netinsight_service_health.csv
-  (optional) data/netinsight_service_health_old.csv  (auto-included if present)
 
 Writes:
   data/service_health_summary.csv
@@ -31,7 +22,6 @@ from pathlib import Path
 import pandas as pd
 
 IN_PATH = Path("data") / "netinsight_service_health.csv"
-OLD_PATH = Path("data") / "netinsight_service_health_old.csv"
 
 OUT_SUMMARY = Path("data") / "service_health_summary.csv"
 OUT_DIST = Path("data") / "service_health_state_distribution.csv"
@@ -68,32 +58,6 @@ def _safe_json_loads(x: str) -> dict:
     except Exception:
         return {}
 
-
-def _normalize_old_schema(df: pd.DataFrame) -> pd.DataFrame:
-    out = pd.DataFrame()
-    out["timestamp"] = ensure_tz(df["timestamp"])
-    out["service_name"] = df.get("service_name", "")
-    out["service_state"] = df.get("service_state", "inconclusive").astype(str)
-    out["http_status_code"] = pd.to_numeric(df.get("http_status_code"), errors="coerce")
-
-    def _to_bool(v):
-        if pd.isna(v):
-            return False
-        if isinstance(v, bool):
-            return v
-        s = str(v).strip().lower()
-        return s in ("1", "true", "yes", "y")
-
-    out["ping_ok"] = df.get("ping_ok", False).map(_to_bool)
-    out["dns_ok"] = df.get("dns_ok", False).map(_to_bool)
-    out["http_ok"] = df.get("http_ok", False).map(_to_bool)
-
-    out["ping_error_kind"] = df.get("ping_error_kind")
-    out["dns_error_kind"] = df.get("dns_error_kind")
-    out["http_error_kind"] = df.get("http_error_kind")
-    out["service_reason"] = df.get("service_reason", "")
-
-    return out.dropna(subset=["timestamp"]).copy()
 
 
 def _normalize_new_schema(df: pd.DataFrame) -> pd.DataFrame:
@@ -169,9 +133,6 @@ def _normalize_new_schema(df: pd.DataFrame) -> pd.DataFrame:
 def load_and_normalize(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
 
-    if "ping_ok" in df.columns and "service_state" in df.columns:
-        return _normalize_old_schema(df)
-
     if "details" in df.columns and "service_name" in df.columns:
         return _normalize_new_schema(df)
 
@@ -180,17 +141,11 @@ def load_and_normalize(path: Path) -> pd.DataFrame:
     )
 
 
-def main() -> None:
+def main():
     if not IN_PATH.exists():
         raise FileNotFoundError(f"Input not found: {IN_PATH}")
 
     parts = [load_and_normalize(IN_PATH)]
-    if OLD_PATH.exists():
-        try:
-            parts.append(load_and_normalize(OLD_PATH))
-        except Exception:
-            # If old file exists but is weird, ignore it (we don't want to block current runs)
-            pass
 
     df = pd.concat(parts, ignore_index=True).dropna(subset=["timestamp"]).copy()
     if df.empty:

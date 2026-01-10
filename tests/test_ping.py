@@ -1,4 +1,3 @@
-# tests/test_ping_check.py
 import subprocess
 from types import SimpleNamespace
 

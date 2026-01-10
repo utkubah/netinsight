@@ -102,7 +102,7 @@ def print_hourly_summary(stats: pd.DataFrame) -> None:
     print(worst_loss)
 
 
-def main() -> None:
+def main():
     df = load_log()
     stats = hourly_ping_stats(df)
 

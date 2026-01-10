@@ -97,11 +97,11 @@ pip install speedtest-cli
 # Show help
 python3 -m src.cli --help
 
+# Baseline — continuous (Ctrl+C to stop)
+python3 -m src.cli 
+
 # Baseline — single round
 python3 -m src.cli baseline --once
-
-# Baseline — continuous (Ctrl+C to stop)
-python3 -m src.cli baseline
 
 # Short Wi-Fi diagnostic (5 rounds, 1s apart)
 python3 -m src.cli wifi-diag --rounds 5 --interval 1
@@ -120,8 +120,8 @@ python3 -m src.cli analyze baseline
 python3 -m src.cli analyze all
 
 # Print a human summary report
-python3 -m src.cli report
 python3 -m src.cli report wifi-diag
+python3 -m src.cli report all
 ```
 
 ---
@@ -181,26 +181,20 @@ Use `severity + reason + top_services_by_bad_pct` to direct your investigation.
 ### 1) Timezone & timestamps
 
 * **Default analysis timezone:** `Europe/Rome`.
-* **Parsing behavior:** if timestamps are tz-aware they are converted to `Europe/Rome`; if tz-naive they are **assumed UTC**, localized to UTC and then converted to `Europe/Rome`.
-* **Recommendation:** make the collector write tz-aware ISO timestamps (e.g. `2026-01-10T13:08:21.258246+00:00`) to avoid ambiguity.
+* It needs to be adjusted for people who live in a different timezone. 
 
 Files to change the timezone (if needed):
-
 * `scripts/quality_score.py`, `scripts/detect_bad_intervals.py`, `scripts/analyze_speedtest.py` — each defines a `TIMEZONE` variable.
 
-### 2) `mode` column
-
-* If `netinsight_log.csv` contains a `mode` column, `quality_score.py` and `detect_bad_intervals.py` **default to filtering** to `mode == "baseline"`. This avoids mixing Wi-Fi diag or service-health rows into baseline analyses.
-
-### 3) Gateway auto-detection
+### 2) Gateway auto-detection
 
 *  If autodetection fails there are possible workarounds:
 
   * Provide gateway explicitly: `--gateway 192.168.1.1` to `wifi-diag`.
-  * Or set env var: `export NETINSIGHT_GATEWAY_IP=192.168.1.1`.
+  * Or set the gateway manually in targets.json and disable persist_gateway function.
 
 
-### 4) Not enough samples for windows
+### 3) Not enough samples for windows
 
 * `detect_bad_intervals.py` uses `MIN_SAMPLES = 30`. If you have too short a log, either collect more data or reduce `MIN_SAMPLES` for testing.
 

@@ -97,7 +97,7 @@ def run_speedtest(log_path: str = LOG_PATH):
     }
 
     try:
-        import speedtest  # from speedtest-cli package
+        import speedtest # from speedtest-cli package
     except Exception as e:
         msg = f"speedtest import failed: {e}"
         row["error"] = msg

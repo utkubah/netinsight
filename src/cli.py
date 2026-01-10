@@ -25,7 +25,7 @@ from . import report as report_mod
 
 def build_parser():
     p = argparse.ArgumentParser(prog="netinsight")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd")
 
     # baseline
     b = sub.add_parser("baseline")
@@ -72,6 +72,12 @@ def main(argv=None):
         argv = sys.argv[1:]
 
     setup_logging()
+
+    # ✅ No args: default behavior -> run baseline forever
+    if len(argv) == 0:
+        baseline_main.main()
+        return
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -102,7 +108,6 @@ def main(argv=None):
 
     elif args.cmd == "report":
         report_mod.run(args.target)
-
 
 if __name__ == "__main__":
     main()

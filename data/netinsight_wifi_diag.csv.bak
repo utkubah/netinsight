@@ -1,0 +1,13 @@
+timestamp,mode,round_id,service_name,hostname,url,tags,probe_type,success,latency_ms,latency_p95_ms,jitter_ms,packet_loss_pct,status_code,error_kind,error_message,details
+2026-01-09T23:08:45.069848+00:00,wifi_diag,2026-01-09T23:08:45.061901+00:00,gateway,10.12.103.254,,,ping,True,4.017,,,,,ok,,"{""round"":1}"
+2026-01-09T23:08:45.081405+00:00,wifi_diag,2026-01-09T23:08:45.061901+00:00,external,www.google.com,,,ping,True,3.997,,,,,ok,,"{""round"":1}"
+2026-01-09T23:08:46.100162+00:00,wifi_diag,2026-01-09T23:08:45.061901+00:00,gateway,10.12.103.254,,,ping,True,4.307,,,,,ok,,"{""round"":2}"
+2026-01-09T23:08:46.111315+00:00,wifi_diag,2026-01-09T23:08:45.061901+00:00,external,www.google.com,,,ping,True,3.979,,,,,ok,,"{""round"":2}"
+2026-01-09T23:08:47.131284+00:00,wifi_diag,2026-01-09T23:08:45.061901+00:00,gateway,10.12.103.254,,,ping,True,3.215,,,,,ok,,"{""round"":3}"
+2026-01-09T23:08:47.143333+00:00,wifi_diag,2026-01-09T23:08:45.061901+00:00,external,www.google.com,,,ping,True,4.02,,,,,ok,,"{""round"":3}"
+2026-01-09T23:14:35.258653+00:00,wifi_diag,2026-01-09T23:14:35.258085+00:00,gateway,,,,ping,False,,,,,,config_missing_gateway,gateway not detected,"{""round"":1}"
+2026-01-09T23:14:35.267312+00:00,wifi_diag,2026-01-09T23:14:35.258085+00:00,external,www.google.com,,,ping,True,4.877,,,,,ok,,"{""round"":1}"
+2026-01-09T23:14:36.272456+00:00,wifi_diag,2026-01-09T23:14:35.258085+00:00,gateway,,,,ping,False,,,,,,config_missing_gateway,gateway not detected,"{""round"":2}"
+2026-01-09T23:14:36.287692+00:00,wifi_diag,2026-01-09T23:14:35.258085+00:00,external,www.google.com,,,ping,True,5.857,,,,,ok,,"{""round"":2}"
+2026-01-09T23:14:37.288826+00:00,wifi_diag,2026-01-09T23:14:35.258085+00:00,gateway,,,,ping,False,,,,,,config_missing_gateway,gateway not detected,"{""round"":3}"
+2026-01-09T23:14:37.309943+00:00,wifi_diag,2026-01-09T23:14:35.258085+00:00,external,www.google.com,,,ping,True,11.381,,,,,ok,,"{""round"":3}"

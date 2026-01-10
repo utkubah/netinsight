@@ -85,7 +85,7 @@ def report_baseline() -> None:
         print("  python3 -m src.cli analyze baseline")
         return
 
-    # Hourly stats (best/worst)
+    # Hourly stats
     if hourly_stats:
         best_lat, worst_lat = _pick_minmax(hourly_stats, "avg_latency_ms")
         best_loss, worst_loss = _pick_minmax(hourly_stats, "packet_loss_pct")
@@ -116,7 +116,7 @@ def report_baseline() -> None:
                 f"severity={r.get('severity')} reason={r.get('reason')} diagnosis={r.get('diagnosis')}"
             )
 
-    # Total downtime summary (if exists)
+    # Total downtime 
     if total_downtime:
         r0 = total_downtime[0]
         td = (

@@ -58,7 +58,6 @@ SEV_3_BAD_PCT = 80.0
 
 NETWORK_WIDE_MIN_AFFECTED_SERVICES = 8
 
-# If quality_rows has 'mode' (from Utku baseline logger), restrict to baseline here too.
 BASELINE_MODE_NAME = "baseline"
 
 
@@ -327,7 +326,7 @@ def main() -> None:
     global_mean = float(windows["mean_score"].mean())
     global_std = float(windows["mean_score"].std(ddof=0))
 
-    # per-window z-score (negative => worse)
+    # per-window z-score (negative = worse)
     if global_std > 1e-9:
         windows["window_score_z"] = (windows["mean_score"] - global_mean) / global_std
     else:

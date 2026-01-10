@@ -25,7 +25,6 @@ OUT_SERVICE_PATH = Path("data") / "quality_by_service.csv"
 
 TIMEZONE = "Europe/Rome"
 
-# If the log has a 'mode' column (Utku's changes), we score only baseline by default
 BASELINE_MODE_NAME = "baseline"
 
 
@@ -161,7 +160,6 @@ def main() -> None:
 
     require_columns(df, ["timestamp", "probe_type", "service_name", "success"])
 
-    # If Utku-style "mode" exists, keep baseline only (prevents future mode mixing)
     mode_filter_applied = False
     if "mode" in df.columns:
         df["mode"] = df["mode"].astype(str)
@@ -178,13 +176,12 @@ def main() -> None:
     # Convenience column
     df["hour"] = df["timestamp"].dt.hour
 
-    # Optional: extract throughput_mbps
+    # extract throughput_mbps
     if "details" in df.columns:
         df["throughput_mbps"] = extract_throughput_mbps(df["details"])
     else:
         df["throughput_mbps"] = pd.NA
 
-    # Compute per-row scores
     probe = df["probe_type"].astype(str)
     has_loss_col = "packet_loss_pct" in df.columns
 
@@ -200,11 +197,10 @@ def main() -> None:
 
     df["tier"] = df["score"].apply(tier_from_score)
 
-    # Deterministic ordering
     sort_cols = [c for c in ["timestamp", "service_name", "probe_type"] if c in df.columns]
     df = df.sort_values(sort_cols).reset_index(drop=True)
 
-    # Save row-level enriched data
+    # Save row level enriched data
     # IMPORTANT: this will keep "mode" column if it exists (we don't drop it)
     df.to_csv(OUT_ROWS_PATH, index=False)
 

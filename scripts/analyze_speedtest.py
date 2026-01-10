@@ -20,7 +20,7 @@ IN_PATH = Path("data") / "netinsight_speedtest.csv"
 OUT_SUMMARY = Path("data") / "speedtest_summary.csv"
 OUT_HOURLY = Path("data") / "speedtest_hourly.csv"
 
-# match your environment (Rome)
+# timezone
 TIMEZONE = "Europe/Rome"
 
 

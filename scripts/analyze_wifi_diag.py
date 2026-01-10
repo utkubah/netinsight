@@ -102,7 +102,7 @@ def main() -> None:
     if probe_col is not None:
         df = df[df[probe_col].astype(str).str.lower().eq("ping")].copy()
 
-    # Timestamp parse (optional)
+    # Timestamp parse
     if ts_col is not None:
         df[ts_col] = ensure_tz(df[ts_col])
 

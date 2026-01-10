@@ -28,7 +28,6 @@ SPEEDTEST_PIPELINE = [
     "analyze_speedtest.py",
 ]
 
-# Script -> required input files (relative to repo root)
 REQUIRES = {
     # baseline chain
     "quality_score.py": ["data/netinsight_log.csv"],

@@ -1,21 +1,3 @@
-"""
-NetInsight - Downtime Detection (ping)
-
-Rule:
-- Downtime event = >= MIN_CONSEC_FAILURES consecutive failures
-- Failures belong to same event if gaps between failures <= MAX_GAP_SECONDS
-
-Reads:
-  data/netinsight_log.csv
-
-Writes:
-  data/downtimes.csv       (event-level)
-  data/total_downtime.csv  (per-service totals)
-
-Run:
-  python3 scripts/detect_downtime.py
-"""
-
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -130,7 +112,7 @@ def detect_downtimes_for_service(df: pd.DataFrame, service: str) -> List[Dict]:
             last_failure_ts = None
             fail_count = 0
 
-    # end-of-file close
+    # sayfasonu close
     if current_start is not None and last_failure_ts is not None and fail_count >= MIN_CONSEC_FAILURES:
         events.append(
             {

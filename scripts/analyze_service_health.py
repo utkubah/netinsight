@@ -70,9 +70,6 @@ def _safe_json_loads(x: str) -> dict:
 
 
 def _normalize_old_schema(df: pd.DataFrame) -> pd.DataFrame:
-    # Expected old columns:
-    # timestamp,mode,service_name,hostname,url,tags,ping_ok,dns_ok,http_ok,
-    # ping_error_kind,dns_error_kind,http_error_kind,http_status_code,service_state,service_reason
     out = pd.DataFrame()
     out["timestamp"] = ensure_tz(df["timestamp"])
     out["service_name"] = df.get("service_name", "")
@@ -100,8 +97,6 @@ def _normalize_old_schema(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _normalize_new_schema(df: pd.DataFrame) -> pd.DataFrame:
-    # New unified schema:
-    # timestamp,mode,round_id,service_name,hostname,url,tags,probe_type,success,latency_ms,...,status_code,error_kind,error_message,details(JSON)
     out_rows = []
     for r in df.itertuples(index=False):
         row = r._asdict()
@@ -111,10 +106,8 @@ def _normalize_new_schema(df: pd.DataFrame) -> pd.DataFrame:
         dns = details.get("dns") if isinstance(details.get("dns"), dict) else {}
         http = details.get("http") if isinstance(details.get("http"), dict) else {}
 
-        # State can live in details["state"] (current) or row["error_kind"] (sometimes)
         state = details.get("state")
         if not state:
-            # if error_kind looks like a state (e.g., "healthy") keep it
             ek = row.get("error_kind")
             if isinstance(ek, str) and ek:
                 state = ek
@@ -143,14 +136,12 @@ def _normalize_new_schema(df: pd.DataFrame) -> pd.DataFrame:
             else:
                 http_ok = (http.get("error_kind") == "ok")
 
-        # Prefer HTTP status from top-level status_code, else from details.http.status_code
         status_code = row.get("status_code")
         if status_code is None or (isinstance(status_code, float) and pd.isna(status_code)):
             status_code = http.get("status_code")
 
         service_reason = details.get("reason", "")
         if not service_reason:
-            # Keep it short; we don't want to invent a long narrative
             service_reason = ""
 
         out_rows.append(
@@ -178,11 +169,9 @@ def _normalize_new_schema(df: pd.DataFrame) -> pd.DataFrame:
 def load_and_normalize(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
 
-    # Detect schema
     if "ping_ok" in df.columns and "service_state" in df.columns:
         return _normalize_old_schema(df)
 
-    # New schema must have details + service_name + status_code/error_kind fields
     if "details" in df.columns and "service_name" in df.columns:
         return _normalize_new_schema(df)
 
@@ -210,7 +199,6 @@ def main() -> None:
 
     df = df.sort_values(["timestamp", "service_name"]).reset_index(drop=True)
 
-    # Simple tags
     df["is_healthy"] = df["service_state"].astype(str).eq("healthy")
     df["is_blockedish"] = df["service_state"].astype(str).isin(BLOCKEDISH_STATES)
 
@@ -225,7 +213,6 @@ def main() -> None:
     )
     summary.to_csv(OUT_SUMMARY, index=False)
 
-    # --- State distribution ---
     dist = (
         df.groupby("service_state")
         .size()
@@ -235,7 +222,6 @@ def main() -> None:
     dist["pct"] = (100.0 * dist["count"] / dist["count"].sum()).round(2)
     dist.to_csv(OUT_DIST, index=False)
 
-    # --- By domain ---
     by_domain = (
         df.groupby("service_name")
         .agg(
@@ -247,7 +233,6 @@ def main() -> None:
         .reset_index()
     )
 
-    # last row per domain for last_state / last_code
     last_rows = (
         df.sort_values(["service_name", "timestamp"])
         .groupby("service_name")

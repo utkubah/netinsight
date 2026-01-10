@@ -158,7 +158,6 @@ Use `severity + reason + top_services_by_bad_pct` to direct your investigation.
 ---
 
 ## How to read the main analysis outputs (practical advice)
-
 * **Start**: run `python3 -m src.cli report` — it prints best/worst hours, top bad intervals, downtime totals, Wi-Fi diag summary, service health and speedtest summaries.
 * **Bad intervals (`bad_intervals.csv`)**:
 
